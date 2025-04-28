@@ -2,27 +2,12 @@ package shared
 
 import "core:net"
 
-MAX_PLAYER_COUNT :: 3
-
-Packet_Type :: enum u8 {
-    Create_Lobby,
-    Get_Lobby,
-    Join_Lobby,
-    Leave_Lobby,
-    Start_Game,
-}
-
-Lobby_Public :: struct {
-    lobby_id: i64,
-    player_count: i64,
-    lobby_name: string,
-    host_name: string,
-}
+MAX_PLAYER_COUNT :: 4
 
 Private_Profile :: struct {
     endpoint: net.Endpoint,
     assigned_id: i64,
-    name: string,
+    user_name: string,
 }
 
 Create_Lobby_Packet :: struct {
@@ -38,7 +23,7 @@ Join_Lobby_Packet :: struct {
 
 Start_Lobby_Packet :: struct {
     lobby_id: i64,
-    assigned_id: i64,
+    host_id: i64,
 }
 
 Leave_Lobby_Packet :: struct {
@@ -58,18 +43,21 @@ Create_Response :: struct {
 }
 
 Join_Lobby_Response :: struct {
-    lobby_name: string,
     assigned_id: i64,
+    lobby_name: string,
+    host_name: string,
 }
 
 Leave_Lobby_Response :: struct {}
 
+
 Start_Lobby_Response :: struct {
-    players: [MAX_PLAYER_COUNT]Private_Profile,
-    count: i64,
+    host: Private_Profile,
+    players: []Private_Profile,
 }
 
 Error :: string
+
 Response :: union {
     Error,
     Create_Response,
