@@ -69,14 +69,14 @@ add_connection :: proc(network: ^Network, endpoint: net.Endpoint) -> (channel_id
     return new_id, true
 }
 
-broadcast_message :: proc(network: ^Network, message: Message, should_ack := false, allocator := context.allocator, temp_allocator := context.temp_allocator) -> net.UDP_Send_Error {
+broadcast_message :: proc(network: ^Network, message: Message, should_ack := false) -> net.UDP_Send_Error {
     for channel_id in 0..<sa.len(network.channels) {
         send_message(network, message, channel_id, should_ack) or_return
     }
     return nil
 }
 
-send_message :: proc(network: ^Network, message: Message, recipient_id: int, should_ack := false, allocator := context.allocator, temp_allocator := context.temp_allocator) -> net.UDP_Send_Error {
+send_message :: proc(network: ^Network, message: Message, recipient_id: int, should_ack := false) -> net.UDP_Send_Error {
     channel := sa.get_ptr(&network.channels, recipient_id)
 
     packet: Packet
@@ -91,16 +91,16 @@ send_message :: proc(network: ^Network, message: Message, recipient_id: int, sho
 
     // put the packet in a sent sent_packet_buffer or something
 
-    bytes, marshal_err := cbor.marshal_into_bytes(packet, cbor.ENCODE_SMALL, allocator, temp_allocator)
+    bytes, marshal_err := cbor.marshal_into_bytes(packet, cbor.ENCODE_SMALL)
     defer delete(bytes)
 
     bytes_written := net.send_udp(network.socket, bytes, channel.endpoint) or_return
     return nil
 }
 
-deserialise_packet :: proc(buf: []byte, temp_allocator := context.temp_allocator) -> Packet {
+deserialise_packet :: proc(buf: []byte) -> Packet {
     packet: Packet
-    cbor.unmarshal_from_string(transmute(string)buf, &packet, {}, temp_allocator, temp_allocator)
+    cbor.unmarshal_from_string(transmute(string)buf, &packet)
     return packet
 }
 
