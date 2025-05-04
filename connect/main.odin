@@ -162,10 +162,10 @@ host_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
     }
 
     setup_connections :: proc(state: ^State, socket: net.UDP_Socket, response: sh.Start_Lobby_Response) {
-        state.this_net_id, _  = gp.init_network(&state.network, socket, response.host.endpoint)
-        for peer_profile in response.players {
-            gp.add_connection(&state.network, peer_profile.endpoint)
-        }
+        //state.this_net_id, _  = gp.init_network(&state.network, socket, response.host.endpoint)
+        //for peer_profile in response.players {
+        //    gp.add_connection(&state.network, peer_profile.endpoint)
+        //}
     }
 
     for !rl.WindowShouldClose() {
@@ -193,13 +193,17 @@ join_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
     }
 
     setup_connections :: proc(state: ^State, socket: net.UDP_Socket, response: sh.Start_Lobby_Response) {
-        gp.init_network(&state.network, socket, response.host.endpoint)
-        for peer_profile in response.players {
-            net_id, _ := gp.add_connection(&state.network, peer_profile.endpoint)
-            if peer_profile.assigned_id == state.lobby.assigned_id {
-                state.this_net_id = net_id
-            }
+        fmt.println(response.host)
+        for peer in response.players {
+            fmt.println(peer)
         }
+        //gp.init_network(&state.network, socket, response.host.endpoint)
+        //for peer_profile in response.players {
+        //  net_id, _ := gp.add_connection(&state.network, peer_profile.endpoint)
+        //    if peer_profile.assigned_id == state.lobby.assigned_id {
+        //        state.this_net_id = net_id
+        //    }
+        //}
     }
 
     for !rl.WindowShouldClose() {
