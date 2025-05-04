@@ -63,16 +63,16 @@ move_player :: proc(dt: f64) {
     }
 
     dir: [2]f32
-    if rl.IsKeyDown(.H) {
+    if rl.IsKeyDown(.A) {
         dir += {+1, 0}
     }
-    if rl.IsKeyDown(.L) {
+    if rl.IsKeyDown(.D) {
         dir += {-1, 0}
     } 
-    if rl.IsKeyDown(.J) {
+    if rl.IsKeyDown(.S) {
         dir += {0, -1}
     }
-    if rl.IsKeyDown(.K) {
+    if rl.IsKeyDown(.W) {
         dir += {0, +1}
     }
 
@@ -87,6 +87,7 @@ move_player :: proc(dt: f64) {
 main :: proc() {
     rl.InitWindow(WIDTH, HEIGHT, "Game")
     time := rl.GetTime()
+    background := rl.LoadTexture("./map.png")
     for !rl.WindowShouldClose() {
         curr := rl.GetTime()
         dt := time - rl.GetTime()
@@ -97,8 +98,10 @@ main :: proc() {
         rl.BeginDrawing()
         rl.BeginMode2D(camera)
         rl.ClearBackground({200, 200, 140, 255}) 
+        rl.DrawTexture(background, 0, 0, {255, 255, 255, 255})
         rl.DrawRectangleV(player.pos - (player.model.size)/2, player.model.size, player.model.color)
         rl.EndDrawing()
+        camera.target = player.pos + {-CANVAS_SIZE/2, - 82}
     }
     rl.CloseWindow()
 }
