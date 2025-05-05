@@ -27,7 +27,9 @@ Player :: struct {
     playerLeft: bool,
     playerRight: bool, 
     playerFrame: i32,
-    direction: i32
+    direction: i32,
+    attacking: bool,
+    attackingSrc: rl.Rectangle
 }
 
 camera := rl.Camera2D{}
@@ -40,12 +42,14 @@ player := Player{
             size = {CELL_SIZE, CELL_SIZE},
         },
         src = rl.Rectangle{0, 0, 48, 48},
+        attackingSrc = rl.Rectangle{5, 0, 48, 48},
         moving = false, 
         playerUp = false, 
         playerDown = false,  
         playerLeft = false,  
         playerRight = false,
-        playerFrame = 0
+        playerFrame = 0,
+        attacking = false
     }
 framecount := 0
 
@@ -79,6 +83,12 @@ move_player :: proc(dt: f64) {
         return CELL_SIZE * speed
     }
 
+    if player.attacking {
+        player.attackingSrc.x = 48
+    } else {
+        player.attackingSrc.x = 0
+    }
+
     dir: [2]f32
     if rl.IsKeyDown(.A) {
         if player.pos[0] > 66 {
@@ -108,6 +118,14 @@ move_player :: proc(dt: f64) {
             player.direction = 1
         }
     }
+    if rl.IsKeyDown(.E) {
+        player.attacking = true
+        player.attackingSrc.y = (4 * player.attackingSrc.height) + (f32(player.direction) * player.attackingSrc.height)
+    } else {
+        player.attacking = false
+    }
+
+    player.src.x = 0
 
     if player.moving {
         if player.playerUp {
@@ -122,7 +140,10 @@ move_player :: proc(dt: f64) {
         if framecount % 8 == 1 {
             player.playerFrame += 1
         }
+        player.src.x = player.src.width * f32(player.playerFrame)
     }
+
+    player.src.y = player.src.height * f32(player.direction)
 
     if dir != {} {
         dir_norm := lg.normalize(dir)
@@ -134,9 +155,6 @@ move_player :: proc(dt: f64) {
     if player.playerFrame > 3 {
         player.playerFrame = 0
     }
-
-    player.src.x = player.src.width * f32(player.playerFrame)
-    player.src.y = player.src.height * f32(player.direction)
 }
 
 main :: proc() {
@@ -146,6 +164,7 @@ main :: proc() {
     time := rl.GetTime()
     background := rl.LoadTexture("./map.png")
     character := rl.LoadTexture("./Spritesheet.png")
+    characterAttack := rl.LoadTexture("./actions.png")
     camera.zoom = f32(WIDTH) / CANVAS_SIZE
 
     for !rl.WindowShouldClose() {
@@ -161,7 +180,11 @@ main :: proc() {
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
         rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
-        rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        if player.attacking {
+            rl.DrawTexturePro(characterAttack, player.attackingSrc, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        } else {
+            rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        }
         rl.EndDrawing()
 
         player.moving = false
@@ -171,5 +194,6 @@ main :: proc() {
     }
     rl.UnloadTexture(background)
     rl.UnloadTexture(character)
+    rl.UnloadTexture(characterAttack)
     rl.CloseWindow()
 }
