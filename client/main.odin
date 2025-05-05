@@ -24,7 +24,7 @@ Player :: struct {
 camera := rl.Camera2D{}
 player := Player{
         id = 1,
-        pos = {0, 0},
+        pos = {163, 86},
         speed = 7,
         model = {
             color = {0, 0, 0, 255},
@@ -64,21 +64,30 @@ move_player :: proc(dt: f64) {
 
     dir: [2]f32
     if rl.IsKeyDown(.A) {
-        dir += {+1, 0}
+        if player.pos[0] > 23 {
+            dir += {+1, 0}
+        }
     }
     if rl.IsKeyDown(.D) {
-        dir += {-1, 0}
+        if player.pos[0] < 1020 {
+            dir += {-1, 0}
+        }
     } 
     if rl.IsKeyDown(.S) {
-        dir += {0, -1}
+        if player.pos[1] < 520 {
+            dir += {0, -1}
+        }
     }
     if rl.IsKeyDown(.W) {
-        dir += {0, +1}
+        if player.pos[1] > 20 {
+            dir += {0, +1}
+        }
     }
 
     if dir != {} {
         dir_norm := lg.normalize(dir)
         player.pos += dir_norm * grid_speed(player.speed) * f32(dt)
+        fmt.eprintln("Player pos: ", player.pos)
     }
     player.facing = dir
     player.model.color = get_ani(player)
@@ -97,8 +106,8 @@ main :: proc() {
         camera.zoom = f32(WIDTH) / CANVAS_SIZE
         rl.BeginDrawing()
         rl.BeginMode2D(camera)
-        rl.ClearBackground({200, 200, 140, 255}) 
-        rl.DrawTexture(background, 0, 0, {255, 255, 255, 255})
+        rl.ClearBackground({155, 212, 195, 255}) 
+        rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
         rl.DrawRectangleV(player.pos - (player.model.size)/2, player.model.size, player.model.color)
         rl.EndDrawing()
         camera.target = player.pos + {-CANVAS_SIZE/2, - 82}
