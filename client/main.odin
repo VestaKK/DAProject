@@ -15,25 +15,26 @@ Player :: struct {
     using pos: [2]f32,
     facing: [2]f32,
     speed: f32,
-    model: struct {
-        color: rl.Color,
-        size: [2]f32,
-    },
     src: rl.Rectangle,
     dest: rl.Rectangle,
     moving: bool,
-    playerUp: bool,
-    playerDown: bool,
-    playerLeft: bool,
-    playerRight: bool, 
-    playerFrame: i32,
+    player_up: bool,
+    player_down: bool,
+    player_left: bool,
+    player_right: bool, 
+    player_frame: i32,
     direction: i32,
     attacking: bool,
-    attackingSrc: rl.Rectangle,
-    placefence: bool,
-    placingfence: bool
+    attacking_src: rl.Rectangle,
+    place_fence: bool,
+    placing_fence: bool,
+    player_num: i32
 }
 Fence :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle
+}
+CurrentFence :: struct {
     src: rl.Rectangle,
     dest: rl.Rectangle
 }
@@ -43,24 +44,24 @@ player := Player{
         id = 1,
         pos = {80 ,77},
         speed = 7,
-        model = {
-            color = {0, 0, 0, 255},
-            size = {CELL_SIZE, CELL_SIZE},
-        },
         src = rl.Rectangle{0, 0, 48, 48},
-        attackingSrc = rl.Rectangle{5, 0, 48, 48},
+        attacking_src = rl.Rectangle{5, 0, 48, 48},
         moving = false, 
-        playerUp = false, 
-        playerDown = false,  
-        playerLeft = false,  
-        playerRight = false,
-        playerFrame = 0,
+        player_up = false, 
+        player_down = false,  
+        player_left = false,  
+        player_right = false,
+        player_frame = 0,
         attacking = false,
-        placefence = false,
-        placingfence = false
-    }
+        place_fence = false,
+        placing_fence = false
+}
 framecount := 0
 fences: [dynamic]Fence
+current_fence := CurrentFence{
+    src = rl.Rectangle{0, 48, 16, 16},
+    dest = rl.Rectangle{0, 0, 20, 20}
+}
 
 get_ani :: proc(player: Player) -> rl.Color {
     switch player.facing {
@@ -93,70 +94,70 @@ move_player :: proc(dt: f64) {
     }
 
     if player.attacking {
-        player.attackingSrc.x = 48
+        player.attacking_src.x = 48
     } else {
-        player.attackingSrc.x = 0
+        player.attacking_src.x = 0
     }
 
     dir: [2]f32
     if rl.IsKeyDown(.A) {
         if player.pos[0] > 66 {
             player.moving = true
-            player.playerLeft = true
+            player.player_left = true
             player.direction = 2
         }
     }
     if rl.IsKeyDown(.D) {
         if player.pos[0] < 1047 {
             player.moving = true
-            player.playerRight = true
+            player.player_right = true
             player.direction = 3
         }
     } 
     if rl.IsKeyDown(.S) {
         if player.pos[1] < 560 {
             player.moving = true
-            player.playerDown = true
+            player.player_down = true
             player.direction = 0
         }
     }
     if rl.IsKeyDown(.W) {
         if player.pos[1] > 66 {
             player.moving = true
-            player.playerUp = true
+            player.player_up = true
             player.direction = 1
         }
     }
     if rl.IsKeyDown(.E) {
         player.attacking = true
-        player.attackingSrc.y = (4 * player.attackingSrc.height) + (f32(player.direction) * player.attackingSrc.height)
+        player.attacking_src.y = (4 * player.attacking_src.height) + (f32(player.direction) * player.attacking_src.height)
     } else {
         player.attacking = false
     }
     if rl.IsKeyDown(.Q) {
-        player.placingfence = true
-        player.placefence = false
+        player.placing_fence = true
+        player.place_fence = false
     } else if rl.IsKeyReleased(.Q) {
-        player.placingfence = false
-        player.placefence = true
+        player.placing_fence = false
+        player.place_fence = true
     }
 
     player.src.x = 0
 
     if player.moving {
-        if player.playerUp {
+        if player.player_up {
             dir = {0, 1}
-        } else if player.playerDown {
+        } else if player.player_down {
             dir = {0, -1}
-        } else if player.playerLeft {
+        } else if player.player_left {
             dir = {1, 0}
-        } else if player.playerRight {
+        } else if player.player_right {
             dir = {-1, 0}
         }
         if framecount % 8 == 1 {
-            player.playerFrame += 1
+            player.player_frame += 1
         }
-        player.src.x = player.src.width * f32(player.playerFrame)
+        player.src.x = player.src.width * f32(player.player_frame)
     }
 
     player.src.y = player.src.height * f32(player.direction)
@@ -168,8 +169,8 @@ move_player :: proc(dt: f64) {
     
     player.facing = dir
     
-    if player.playerFrame > 3 {
-        player.playerFrame = 0
+    if player.player_frame > 3 {
+        player.player_frame = 0
     }
 }
 
@@ -190,7 +191,7 @@ main :: proc() {
         time = curr
 
         move_player(dt)
-        player.dest = rl.Rectangle{player.pos[0] - (player.model.size[0]/2), player.pos[1] - (player.model.size[1]/2), 60, 60}
+        player.dest = rl.Rectangle{player.pos[0], player.pos[1], 60, 60}
         camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
         
         rl.BeginDrawing()
@@ -203,45 +204,42 @@ main :: proc() {
         }
 
         if player.attacking {
-            rl.DrawTexturePro(characterAttack, player.attackingSrc, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
-        } else if player.placingfence {
+            rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        } else if player.placing_fence {
             if player.direction == 0 {
                 rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
-                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 12, player.pos[1] + 20, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                current_fence.dest = rl.Rectangle{player.pos[0] + 20, player.pos[1] + 25, 20, 20}
+                rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
             } else if player.direction == 1 {
-                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 12, player.pos[1] + 10, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                current_fence.dest = rl.Rectangle{player.pos[0] + 20, player.pos[1] + 15, 20, 20}
+                rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
                 rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
             } else if player.direction == 2 {
-                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 7, player.pos[1] + 12, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                current_fence.dest = rl.Rectangle{player.pos[0] + 15, player.pos[1] + 20, 20, 20}
+                rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
                 rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
             } else if player.direction == 3 {
-                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 17, player.pos[1] + 12, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                current_fence.dest = rl.Rectangle{player.pos[0] + 25, player.pos[1] + 20, 20, 20}
+                rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
                 rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
             } 
         } else {
             rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         }
-        if player.placefence {
-            if player.direction == 0 {
-                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 12, player.pos[1] + 20, 20, 20}})
-            } else if player.direction == 1 {
-                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 12, player.pos[1] + 10, 20, 20}})
-            } else if player.direction == 2 {
-                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 7, player.pos[1] + 12, 20, 20}})
-            } else if player.direction == 3 {
-                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 17, player.pos[1] + 12, 20, 20}})
-            } 
-            player.placefence = false
+        if player.place_fence {
+            append(&fences, Fence{current_fence.src, current_fence.dest})
+            player.place_fence = false
         }
 
         rl.EndDrawing()
 
         player.moving = false
-        player.playerUp, player.playerDown, player.playerLeft, player.playerRight = false, false, false, false
+        player.player_up, player.player_down, player.player_left, player.player_right = false, false, false, false
 
         framecount += 1
     }
     
+    rl.UnloadTexture(fenceT)
     rl.UnloadTexture(background)
     rl.UnloadTexture(character)
     rl.UnloadTexture(characterAttack)
