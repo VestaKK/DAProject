@@ -29,7 +29,13 @@ Player :: struct {
     playerFrame: i32,
     direction: i32,
     attacking: bool,
-    attackingSrc: rl.Rectangle
+    attackingSrc: rl.Rectangle,
+    placefence: bool,
+    placingfence: bool
+}
+Fence :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle
 }
 
 camera := rl.Camera2D{}
@@ -49,9 +55,12 @@ player := Player{
         playerLeft = false,  
         playerRight = false,
         playerFrame = 0,
-        attacking = false
+        attacking = false,
+        placefence = false,
+        placingfence = false
     }
 framecount := 0
+fences: [dynamic]Fence
 
 get_ani :: proc(player: Player) -> rl.Color {
     switch player.facing {
@@ -124,6 +133,13 @@ move_player :: proc(dt: f64) {
     } else {
         player.attacking = false
     }
+    if rl.IsKeyDown(.Q) {
+        player.placingfence = true
+        player.placefence = false
+    } else if rl.IsKeyReleased(.Q) {
+        player.placingfence = false
+        player.placefence = true
+    }
 
     player.src.x = 0
 
@@ -165,6 +181,7 @@ main :: proc() {
     background := rl.LoadTexture("./map.png")
     character := rl.LoadTexture("./Spritesheet.png")
     characterAttack := rl.LoadTexture("./actions.png")
+    fenceT := rl.LoadTexture("./Fences.png")
     camera.zoom = f32(WIDTH) / CANVAS_SIZE
 
     for !rl.WindowShouldClose() {
@@ -180,11 +197,43 @@ main :: proc() {
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
         rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
+
+        for fence in fences {
+            rl.DrawTexturePro(fenceT, fence.src, fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        }
+
         if player.attacking {
             rl.DrawTexturePro(characterAttack, player.attackingSrc, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        } else if player.placingfence {
+            if player.direction == 0 {
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 12, player.pos[1] + 20, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            } else if player.direction == 1 {
+                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 12, player.pos[1] + 10, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            } else if player.direction == 2 {
+                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 7, player.pos[1] + 12, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            } else if player.direction == 3 {
+                rl.DrawTexturePro(fenceT, {0, 48, 16, 16}, {player.pos[0] + 17, player.pos[1] + 12, 20, 20}, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            } 
         } else {
             rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         }
+        if player.placefence {
+            if player.direction == 0 {
+                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 12, player.pos[1] + 20, 20, 20}})
+            } else if player.direction == 1 {
+                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 12, player.pos[1] + 10, 20, 20}})
+            } else if player.direction == 2 {
+                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 7, player.pos[1] + 12, 20, 20}})
+            } else if player.direction == 3 {
+                append(&fences, Fence{src = {0, 48, 16, 16}, dest = {player.pos[0] + 17, player.pos[1] + 12, 20, 20}})
+            } 
+            player.placefence = false
+        }
+
         rl.EndDrawing()
 
         player.moving = false
@@ -192,6 +241,7 @@ main :: proc() {
 
         framecount += 1
     }
+    
     rl.UnloadTexture(background)
     rl.UnloadTexture(character)
     rl.UnloadTexture(characterAttack)
