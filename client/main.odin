@@ -32,7 +32,8 @@ Player :: struct {
 }
 Fence :: struct {
     src: rl.Rectangle,
-    dest: rl.Rectangle
+    dest: rl.Rectangle,
+    health: int
 }
 camera := rl.Camera2D{}
 player := Player{
@@ -163,7 +164,6 @@ move_player :: proc(dt: f64) {
         next_pos := player.pos + (dir_norm * grid_speed(player.speed) * f32(dt))
         
         for fence in fences {
-            rl.DrawRectangleRec({next_pos[0], next_pos[1], 48, 48}, {255,255,255,255})
             if fence.dest != last_fence_dest && next_pos[0] < fence.dest.x + - 10 && next_pos[0] > fence.dest.x - 30 && next_pos[1] < fence.dest.y - 10 && next_pos[1] > fence.dest.y - 40 {
                 next_pos = player.pos
                 break
@@ -211,6 +211,17 @@ main :: proc() {
 
         if player.attacking {
             rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            i := 0
+            for &fence in fences {
+                if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
+                    fence.health -= int(1)
+                    if fence.health <= 0 {
+                        unordered_remove(&fences, i)
+                    }
+                    break
+                }
+                i += 1
+            }
         } else if player.placing_fence {
             if player.direction == 0 {
                 rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
@@ -233,7 +244,7 @@ main :: proc() {
             rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         }
         if player.place_fence {
-            append(&fences, Fence{current_fence.src, current_fence.dest})
+            append(&fences, Fence{current_fence.src, current_fence.dest, 20})
             player.place_fence = false
             last_fence_dest = current_fence.dest
         }
