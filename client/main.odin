@@ -34,15 +34,10 @@ Fence :: struct {
     src: rl.Rectangle,
     dest: rl.Rectangle
 }
-CurrentFence :: struct {
-    src: rl.Rectangle,
-    dest: rl.Rectangle
-}
-
 camera := rl.Camera2D{}
 player := Player{
         id = 1,
-        pos = {80 ,77},
+        pos = {80, 77},
         speed = 7,
         src = rl.Rectangle{0, 0, 48, 48},
         attacking_src = rl.Rectangle{5, 0, 48, 48},
@@ -58,10 +53,11 @@ player := Player{
 }
 framecount := 0
 fences: [dynamic]Fence
-current_fence := CurrentFence{
+current_fence := Fence{
     src = rl.Rectangle{0, 48, 16, 16},
     dest = rl.Rectangle{0, 0, 20, 20}
 }
+last_fence_dest := rl.Rectangle{}
 
 get_ani :: proc(player: Player) -> rl.Color {
     switch player.facing {
@@ -164,7 +160,17 @@ move_player :: proc(dt: f64) {
 
     if dir != {} {
         dir_norm := lg.normalize(dir)
-        player.pos += dir_norm * grid_speed(player.speed) * f32(dt)
+        next_pos := player.pos + (dir_norm * grid_speed(player.speed) * f32(dt))
+        
+        for fence in fences {
+            rl.DrawRectangleRec({next_pos[0], next_pos[1], 48, 48}, {255,255,255,255})
+            if fence.dest != last_fence_dest && next_pos[0] < fence.dest.x + - 10 && next_pos[0] > fence.dest.x - 30 && next_pos[1] < fence.dest.y - 10 && next_pos[1] > fence.dest.y - 40 {
+                next_pos = player.pos
+                break
+            }
+        }
+
+        player.pos = next_pos
     }
     
     player.facing = dir
@@ -229,6 +235,7 @@ main :: proc() {
         if player.place_fence {
             append(&fences, Fence{current_fence.src, current_fence.dest})
             player.place_fence = false
+            last_fence_dest = current_fence.dest
         }
 
         rl.EndDrawing()
