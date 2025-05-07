@@ -28,7 +28,8 @@ Player :: struct {
     attacking_src: rl.Rectangle,
     place_fence: bool,
     placing_fence: bool,
-    color: rl.Color
+    color: rl.Color,
+    health: i32
 }
 Fence :: struct {
     src: rl.Rectangle,
@@ -51,7 +52,8 @@ player := Player{
         attacking = false,
         place_fence = false,
         placing_fence = false,
-        color = rl.WHITE
+        color = rl.WHITE,
+        health = 100
 }
 framecount := 0
 fences: [dynamic]Fence
@@ -221,6 +223,9 @@ main :: proc() {
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
         rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
+
+        // draw health bar
+        rl.DrawText(rl.TextFormat("%i/100", player.health), i32(player.pos.x - 195), i32(player.pos.y - 115), 12, rl.RED);
 
         for fence in fences {
             rl.DrawTexturePro(fenceT, fence.src, fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
