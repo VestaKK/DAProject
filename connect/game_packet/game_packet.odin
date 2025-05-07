@@ -185,9 +185,11 @@ Header :: struct #packed {
 
 Keep_Alive :: struct {}
 Marker :: struct {}
+Snapshot :: []byte
 Internal :: union {
     Keep_Alive,
     Marker,
+    Snapshot,
 }
 
 Message :: union {
@@ -228,7 +230,7 @@ init_network :: proc(
     network.msg_clone_proc = msg_clone_proc
     network.net_allocator = net_allocator
     network.net_temp = net_temp
-    network.message_queue = make([dynamic]Message)
+    network.message_queue = make([dynamic]Message, net_allocator)
     network.snap_state = {}
     return
 }
@@ -250,8 +252,8 @@ add_connection :: proc(network: ^Network, endpoint: net.Endpoint) -> (channel_id
         id = i8(new_id),
         endpoint = endpoint,
         ack_processed = max(u16),
-        unprocessed = make([dynamic]Message),
-        recorded_messages = make([dynamic]Message),
+        unprocessed = make([dynamic]Message, network.net_allocator),
+        recorded_messages = make([dynamic]Message, network.net_allocator),
     }
     init_sequence_buffer(network, &new_channel.seq_send) 
     for &sequence in new_channel.buf_recv {
@@ -268,6 +270,7 @@ delete_channel :: proc(network: ^Network, channel: ^Channel) {
         delete_message(network, message)
     }
     delete(channel.unprocessed)
+    delete(channel.recorded_messages)
 }
 
 @private
@@ -329,7 +332,7 @@ poll_for_packets :: proc(network: ^Network) -> (bool, bool) {
     }
 
     // This means we've finished recording
-    if network.recorded_count == sa.len(network.channels) {
+    if network.is_recording && network.recorded_count == sa.len(network.channels) {
         network.snap_state = {}
         network.snap_ready = true
 
@@ -343,7 +346,7 @@ poll_for_packets :: proc(network: ^Network) -> (bool, bool) {
     return network.should_snapshot, network.snap_ready
 }
 
-take_snapshot :: proc(network: ^Network, data: ^$T, $snapshot_proc: proc(^T) -> T) {  
+take_state_snapshot :: proc(network: ^Network, data: ^$T, $snapshot_proc: proc(^T) -> T) {  
     if network.should_snapshot == true {
         network.should_snapshot = false
         return snapshot_proc(data)
@@ -379,11 +382,6 @@ resend_data_to_channel :: proc(network: ^Network, channel: ^Channel, data: Data,
     packet.header.ack_processed = channel.ack_processed
     packet.header.ack_bits = get_ack_bits(channel.buf_recv, channel.ack)
     packet.data = data 
-
-    if message, ok := data.(Message); ok {
-        put_message(network, &channel.seq_send, message, channel.seq, color)
-        channel.seq += 1
-    }
 
     bytes, marshal_err := cbor.marshal_into_bytes(packet, cbor.ENCODE_SMALL, network.net_allocator, network.net_temp)
     defer delete(bytes)
@@ -509,8 +507,6 @@ next_color :: proc(color: Color) -> Color {
 @private
 first_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
 
-    // CHANGE COLOR
-
     // Save color of current process, change process color and start recording messages
     network.is_recording = true
     network.snap_color = network.color
@@ -523,12 +519,12 @@ first_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
     channel.marker_received = true
 
     // Channel records messages that haven't been processed up till the end_sequence number 
-    // indicated by the header of a different coloured message
+    // indicated by the header of a different coloured message (THIS IS OUR MARKER PIGGYBACKING)
     channel.record_end_seq = header.prev_end_seq
     channel.record_start_seq = channel.ack_processed
 
     // Last sequence number that the receiver of our messages on this channel should include in their 
-    // snapshot
+    // snapshot (THIS IS OUR MARKER PIGGYBACKING)
     channel.prev_end_seq = channel.seq
 
     // Copy all existing unprocessed messages to the recording buffer
@@ -610,7 +606,7 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
         paws_greater_than(channel.ack_processed, channel.record_end_seq) {
         channel.done_recording = true
         network.recorded_count += 1 
-    }
+    } // essentially sets channel.done_recording = true
 
     // No longer concerned with the snapshot stuff
     packet_ack := header.ack
