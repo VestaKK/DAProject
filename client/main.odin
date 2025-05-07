@@ -28,7 +28,7 @@ Player :: struct {
     attacking_src: rl.Rectangle,
     place_fence: bool,
     placing_fence: bool,
-    player_num: i32
+    color: rl.Color
 }
 Fence :: struct {
     src: rl.Rectangle,
@@ -50,7 +50,8 @@ player := Player{
         player_frame = 0,
         attacking = false,
         place_fence = false,
-        placing_fence = false
+        placing_fence = false,
+        color = rl.WHITE
 }
 framecount := 0
 fences: [dynamic]Fence
@@ -191,6 +192,22 @@ main :: proc() {
     fenceT := rl.LoadTexture("./Fences.png")
     camera.zoom = f32(WIDTH) / CANVAS_SIZE
 
+    player.id = 1
+    switch player.id {
+        case 1:
+            player.pos = {80, 77}
+            player.color = {255, 255, 255, 255}
+        case 2:
+            player.pos = {967, 77}
+            player.color = {196, 238, 255, 255}
+        case 3:
+            player.pos = {80, 467}
+            player.color = {255, 196, 227, 255}
+        case 4:
+            player.pos = {967, 467}
+            player.color = {255, 236, 196, 255}
+    }
+
     for !rl.WindowShouldClose() {
         curr := rl.GetTime()
         dt := time - rl.GetTime()
@@ -210,7 +227,7 @@ main :: proc() {
         }
 
         if player.attacking {
-            rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
             i := 0
             for &fence in fences {
                 if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
@@ -224,24 +241,24 @@ main :: proc() {
             }
         } else if player.placing_fence {
             if player.direction == 0 {
-                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
                 current_fence.dest = rl.Rectangle{player.pos[0] + 20, player.pos[1] + 25, 20, 20}
                 rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
             } else if player.direction == 1 {
                 current_fence.dest = rl.Rectangle{player.pos[0] + 20, player.pos[1] + 15, 20, 20}
                 rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
-                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
             } else if player.direction == 2 {
                 current_fence.dest = rl.Rectangle{player.pos[0] + 15, player.pos[1] + 20, 20, 20}
                 rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
-                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
             } else if player.direction == 3 {
                 current_fence.dest = rl.Rectangle{player.pos[0] + 25, player.pos[1] + 20, 20, 20}
                 rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
-                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+                rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
             } 
         } else {
-            rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+            rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
         }
         if player.place_fence {
             append(&fences, Fence{current_fence.src, current_fence.dest, 20})
