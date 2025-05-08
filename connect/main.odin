@@ -12,6 +12,7 @@ import "core:flags"
 import rl "vendor:raylib"
 import gp "game_packet"
 import "core:time"
+import lg "core:math/linalg"
 
 Options :: struct {
     port: int `args:"pos=0,requied" usage:"Client Port"`,
@@ -56,6 +57,78 @@ State :: struct {
     network: gp.Network,
     this_net_id: int,
 }
+
+// Game Structs
+Player :: struct {
+    id: i64,
+    using pos: [2]f32,
+    facing: [2]f32,
+    speed: f32,
+    src: rl.Rectangle,
+    dest: rl.Rectangle,
+    moving: bool,
+    player_up: bool,
+    player_down: bool,
+    player_left: bool,
+    player_right: bool, 
+    player_frame: i32,
+    direction: i32,
+    attacking: bool,
+    attacking_src: rl.Rectangle,
+    place_fence: bool,
+    placing_fence: bool,
+    color: rl.Color,
+    health: i32,
+    moved: bool,
+    attack_done: bool
+}
+
+Fence :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle,
+    health: int
+}
+
+// Game State intialization
+WIDTH :: 1000
+HEIGHT :: 500 
+GRID_WIDTH :: 20
+CELL_SIZE :: 16
+CANVAS_SIZE :: GRID_WIDTH * CELL_SIZE
+
+camera := rl.Camera2D{}
+
+player := Player{
+    id = 1,
+    pos = {80, 77},
+    speed = 7,
+    src = rl.Rectangle{0, 0, 48, 48},
+    attacking_src = rl.Rectangle{5, 0, 48, 48},
+    moving = false, 
+    player_up = false, 
+    player_down = false,  
+    player_left = false,  
+    player_right = false,
+    player_frame = 0,
+    attacking = false,
+    place_fence = false,
+    placing_fence = false,
+    color = rl.WHITE,
+    health = 100,
+    moved = false,
+    attack_done = false
+}
+
+framecount := 0
+
+fences: [dynamic]Fence
+
+current_fence := Fence{
+    src = rl.Rectangle{0, 48, 16, 16},
+    dest = rl.Rectangle{0, 0, 20, 20}
+}
+
+last_fence_dest := rl.Rectangle{}
 
 // Response scratch buffer
 buf: [1024]byte
@@ -348,34 +421,66 @@ play_game :: proc(s: ^State) {
 
     last_tick := time.tick_now()
     accum := time.Duration(0)
+    game_time := rl.GetTime()
+
+    rl.InitWindow(WIDTH, HEIGHT, "Game")
+    rl.SetTargetFPS(60)
+
+    background := rl.LoadTexture("./map.png")
+    character := rl.LoadTexture("./Spritesheet.png")
+    characterAttack := rl.LoadTexture("./actions.png")
+    fenceT := rl.LoadTexture("./Fences.png")
+    camera.zoom = f32(WIDTH) / CANVAS_SIZE
+
+    other_players := [4]gp.Player_Move{}
+
+    for i in 0 ..= 3 {
+        if i64(i) == s.lobby.assigned_id {
+            continue
+        }
+        if i == 0 {
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 77, 60, 60}, {255, 255, 255, 255}, 0, false, false, 0}
+        } else if i == 1 {
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 77, 60, 60}, {196, 238, 255, 255}, 1, false, false, 0}
+        } else if i == 2 {
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 467, 60, 60}, {255, 196, 227, 255}, 2,false, false, 0}
+        } else if i == 3 {
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 467, 60, 60}, {255, 236, 196, 255}, 3, false, false, 0}
+        }
+    }
+
+    switch s.lobby.assigned_id {
+        case 0:
+            player.pos = {80, 77}
+            player.color = {255, 255, 255, 255}
+        case 1:
+            player.pos = {967, 77}
+            player.color = {196, 238, 255, 255}
+        case 2:
+            player.pos = {80, 467}
+            player.color = {255, 196, 227, 255}
+        case 3:
+            player.pos = {967, 467}
+            player.color = {255, 236, 196, 255}
+    }
+
     for !rl.WindowShouldClose() {
 
         time_now := time.tick_now()
         dt := time.tick_diff(last_tick, time_now)
         last_tick = time_now
         accum += dt
+        curr := rl.GetTime()
+        game_dt := game_time - rl.GetTime()
+        game_time = curr
+
 
         should_snap, snap_ready := gp.poll_for_packets(&s.network) 
-
-        @static count := 0
-        if rl.IsKeyPressed(.A) {
-            fmt.println("I PRESSED A")
-            ok := gp.send_message(&s.network, gp.Message(count), s.network.host_id)
-            count += 1
-            if !ok {
-                fmt.println("UH OH")
-            }
-        }
-
-        if rl.IsKeyPressed(.B) {
-            fmt.println("I PRESSED B")
-            ok := gp.send_message(&s.network, gp.Message(count), 1)
-        }
 
         if should_snap || snap_ready {
         } 
 
-        if (accum > time.Second * 10) {
+        if (accum > time.Second / 60) {
             fmt.println("Message Loop")
 
             accum = 0
@@ -388,15 +493,244 @@ play_game :: proc(s: ^State) {
                         // do nothign
                     case int:
                         fmt.println(v)
+                    case gp.Player_Move:
+                        other_players[v.id] = v
                 }
             }
         }
 
+        player.moved = false
+        move_player(game_dt)
+        player.dest = rl.Rectangle{player.pos[0], player.pos[1], 60, 60}
+        camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
 
         rl.BeginDrawing()
-        rl.ClearBackground({200, 200, 140, 255}) 
-        text_width := rl.MeasureText("GAME", 20)
-        rl.DrawText("GAME", (i32(s.window.width) - text_width)/2, i32(s.window.height)/2, 20, {0, 0, 0, 255})
+
+        rl.BeginMode2D(camera)
+        rl.ClearBackground({155, 212, 195, 255}) 
+        rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
+
+        // draw health bar
+        rl.DrawText(rl.TextFormat("%i/100", player.health), i32(player.pos.x - 195), i32(player.pos.y - 115), 12, rl.RED);
+
+        for fence in fences {
+            rl.DrawTexturePro(fenceT, fence.src, fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        }
+
+        for other_player in other_players {
+            if other_player.id == s.lobby.assigned_id {
+                continue
+            }
+            if other_player.attacking {
+                rl.DrawTexturePro(characterAttack, other_player.src, other_player.dest, {other_player.dest.width, other_player.dest.height}, 0, other_player.color)
+            } else if other_player.placing_fence {
+                player_with_fence(other_player, character, fenceT, &current_fence)
+            } else {
+                rl.DrawTexturePro(character, other_player.src, other_player.dest, {other_player.dest.width, other_player.dest.height}, 0, other_player.color)
+            }
+        }
+
+        if player.attacking {
+            rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+            i := 0
+            for &fence in fences {
+                if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
+                    fence.health -= int(1)
+                    if fence.health <= 0 {
+                        unordered_remove(&fences, i)
+                    }
+                    break
+                }
+                i += 1
+            }
+        } else if player.placing_fence {
+            player_with_fence(gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, false, false, player.direction}, character, fenceT, &current_fence)
+        } else {
+            rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+        }
+
+        player_move := gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, player.attacking, player.placing_fence, player.direction}
+        if player.attacking {
+            player_move.src = player.attacking_src
+        }
+
+        if(player.moved || player.placing_fence || player.attacking || player.attack_done) {
+            ok := gp.broadcast_message(&s.network, gp.Message(player_move))
+            if !ok {
+                fmt.println("UH OH")
+            }
+        } 
+
+        if player.place_fence {
+            append(&fences, Fence{current_fence.src, current_fence.dest, 20})
+            player.place_fence = false
+            last_fence_dest = current_fence.dest
+        }
+        
         rl.EndDrawing()
+
+        player.moving = false
+        player.player_up, player.player_down, player.player_left, player.player_right = false, false, false, false
+
+        framecount += 1
+    }
+
+    rl.UnloadTexture(fenceT)
+    rl.UnloadTexture(background)
+    rl.UnloadTexture(character)
+    rl.UnloadTexture(characterAttack)
+    rl.CloseWindow()
+}
+
+// Game Logic
+
+player_with_fence :: proc(player: gp.Player_Move, character: rl.Texture2D, fenceT: rl.Texture2D, current_fence: ^Fence) {
+    if player.direction == 0 {
+        rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+        current_fence.dest = rl.Rectangle{player.dest.x + 20, player.dest.y + 25, 20, 20}
+        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+    } else if player.direction == 1 {
+        current_fence.dest = rl.Rectangle{player.dest.x + 20, player.dest.y + 15, 20, 20}
+        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+    } else if player.direction == 2 {
+        current_fence.dest = rl.Rectangle{player.dest.x + 15, player.dest.y + 20, 20, 20}
+        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+    } else if player.direction == 3 {
+        current_fence.dest = rl.Rectangle{player.dest.x + 25, player.dest.y + 20, 20, 20}
+        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
+    } 
+}
+
+get_ani :: proc(player: Player) -> rl.Color {
+    switch player.facing {
+        case {0, 0}:
+            return {100, 100, 100, 255}
+        case {0, 1}:
+            return {255, 0, 0, 255}
+        case {0, -1}:
+            return {0, 255, 0, 255}
+        case {1, 0}:
+            return {0, 0, 255, 255}
+        case {-1, 0}:
+            return {255, 0, 255, 255}
+        case {1, 1}:
+            return {255, 255, 0, 255}
+        case {1, -1}:
+            return {0, 255, 255, 255}
+        case {-1, 1}:
+            return {125, 125, 125, 255}
+        case {-1, -1}:
+            return {76, 29, 144, 255}
+    }
+    return {255, 0, 0, 255}
+}
+
+move_player :: proc(dt: f64) {
+    
+    grid_speed :: proc(speed: f32) -> f32 {
+        return CELL_SIZE * speed
+    }
+
+    if player.attacking {
+        player.attacking_src.x = 48
+    } else {
+        player.attacking_src.x = 0
+    }
+
+    dir: [2]f32
+    if rl.IsKeyDown(.A) {
+        if player.pos[0] > 66 {
+            player.moving = true
+            player.player_left = true
+            player.direction = 2
+            player.moved = true
+        }
+    }
+    if rl.IsKeyDown(.D) {
+        if player.pos[0] < 1047 {
+            player.moving = true
+            player.player_right = true
+            player.direction = 3
+            player.moved = true
+        }
+    } 
+    if rl.IsKeyDown(.S) {
+        if player.pos[1] < 560 {
+            player.moving = true
+            player.player_down = true
+            player.direction = 0
+            player.moved = true
+        }
+    }
+    if rl.IsKeyDown(.W) {
+        if player.pos[1] > 66 {
+            player.moving = true
+            player.player_up = true
+            player.direction = 1
+            player.moved = true
+        }
+    }
+    if rl.IsKeyDown(.E) {
+        player.attack_done = false
+        player.attacking = true
+        player.attacking_src.y = (4 * player.attacking_src.height) + (f32(player.direction) * player.attacking_src.height)
+    } else if  rl.IsKeyReleased(.E) {
+        player.attack_done = true
+    }
+    else {
+        player.attacking = false
+    }
+    if rl.IsKeyDown(.Q) {
+        player.placing_fence = true
+        player.place_fence = false
+    } else if rl.IsKeyReleased(.Q) {
+        player.placing_fence = false
+        player.place_fence = true
+    }
+
+    player.src.x = 0
+
+    if player.moving {
+        if player.player_up {
+            dir = {0, 1}
+        } else if player.player_down {
+            dir = {0, -1}
+        } else if player.player_left {
+            dir = {1, 0}
+        } else if player.player_right {
+            dir = {-1, 0}
+        }
+        if framecount % 8 == 1 {
+            player.player_frame += 1
+        }
+        player.src.x = player.src.width * f32(player.player_frame)
+    }
+
+    player.src.y = player.src.height * f32(player.direction)
+
+    if dir != {} {
+        dir_norm := lg.normalize(dir)
+        next_pos := player.pos + (dir_norm * grid_speed(player.speed) * f32(dt))
+        
+        for fence in fences {
+            if fence.dest != last_fence_dest && next_pos[0] < fence.dest.x + - 10 && next_pos[0] > fence.dest.x - 30 && next_pos[1] < fence.dest.y - 10 && next_pos[1] > fence.dest.y - 40 {
+                next_pos = player.pos
+                break
+            }
+        }
+
+        player.pos = next_pos
+    }
+    
+    player.facing = dir
+    
+    if player.player_frame > 3 {
+        player.player_frame = 0
     }
 }
+
+
+

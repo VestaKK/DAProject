@@ -8,6 +8,7 @@ import "core:time"
 import "core:fmt"
 import "core:strings"
 import "core:slice"
+import rl "vendor:raylib"
 
 SEQUENCE_BUFFER_SIZE :: 1024
 MAX_CONNECTIONS :: 4
@@ -48,6 +49,7 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
             delete(v)
         case []int:
             delete(v)
+        case Player_Move:
     }
 }
 
@@ -61,6 +63,12 @@ default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_
             return strings.clone(v, allocator) 
         case []int:
             return slice.clone(v)
+        case Player_Move:
+            return Player_Move{
+                src = v.src,
+                dest = v.dest,
+                color = v.color,
+            }
     }
     return nil
 }
@@ -228,7 +236,8 @@ Message :: union {
     struct{},
     int,
     string,
-    []int
+    []int,
+    Player_Move
 }
 
 Data :: union #shared_nil {
@@ -240,6 +249,17 @@ Packet :: struct {
     header: Header,
     data: Data,
 }
+
+Player_Move :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle,
+    color: rl.Color,
+    id: i64,
+    attacking: bool,
+    placing_fence: bool,
+    direction: i32
+}
+
 
 init_network :: proc(
     network: ^Network,
@@ -358,6 +378,10 @@ send_data:: proc(network: ^Network, data: Data, net_id: int) -> bool {
 
 send_message :: proc(network: ^Network, message: Message, net_id: int) -> bool {
     return send_data(network, message, net_id) 
+}
+
+broadcast_message :: proc(network: ^Network, message: Message) -> bool {
+    return broadcast_data(network, message)
 }
 
 @private
