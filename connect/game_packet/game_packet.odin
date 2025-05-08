@@ -4,14 +4,18 @@ import "core:encoding/cbor"
 import "core:net"
 import sa "core:container/small_array"
 import "base:runtime"
+import "core:time"
+import "core:fmt"
+import "core:strings"
 
 SEQUENCE_BUFFER_SIZE :: 1024
 MAX_CONNECTIONS :: 4
 
-buf: [1024]byte
+buf: [4096]byte
 
 Network :: struct {
     host_id: int,
+    this_id: i8,
     color: Color,
     socket: net.UDP_Socket,
     channels: sa.Small_Array(MAX_CONNECTIONS, Channel),
@@ -22,6 +26,8 @@ Network :: struct {
     msg_delete_proc: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator),
     msg_clone_proc: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) -> Message,
     message_queue: [dynamic]Message,
+    last_tick: time.Tick,
+    tick_accum: time.Duration,
 
     // Snapshot stuff
     using snap_state : struct {
@@ -33,7 +39,21 @@ Network :: struct {
     },
 }
 
-@private
+default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) {
+    switch v in message {
+        case struct{}:
+        case int:
+    }
+}
+default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) -> Message {
+    switch v in message {
+        case struct{}:
+            return v
+        case int:
+            return v
+    }
+    return nil
+}
 delete_message :: proc(network: ^Network, message: Message) {
     network.msg_delete_proc(message, network.msg_allocator, network.msg_temp)
 }
@@ -92,6 +112,7 @@ delete_sequence_buffer :: proc(network: ^Network, sbuffer: ^Sequence_Buffer) {
             delete_message(network, sbuffer.buf_msg[i])
         }
     }
+    delete(sbuffer.buf_msg, network.net_allocator)
 }
 
 @private
@@ -186,6 +207,7 @@ Header :: struct #packed {
 Keep_Alive :: struct {}
 Marker :: struct {}
 Snapshot :: []byte
+
 Internal :: union {
     Keep_Alive,
     Marker,
@@ -193,7 +215,8 @@ Internal :: union {
 }
 
 Message :: union {
-    struct{}
+    struct{},
+    int,
 }
 
 Data :: union #shared_nil {
@@ -210,26 +233,31 @@ init_network :: proc(
     network: ^Network,
     socket: net.UDP_Socket,
     host_endpoint: net.Endpoint,
-    msg_allocator: runtime.Allocator,
-    msg_temp: runtime.Allocator,
     msg_delete_proc: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator),
     msg_clone_proc: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) -> Message,
+    this_process:= false,
+    msg_allocator := context.allocator,
+    msg_temp := context.allocator,
     net_allocator := context.allocator,
     net_temp:= context.temp_allocator,
 ) -> (host_id: int, ok: bool) { 
     if network.net_allocator != {} {
         return
     }
+    fmt.println("INITING NETWORK")
+
+    // allocators first
+    network.net_allocator = net_allocator
+    network.net_temp = net_temp
+    network.msg_allocator = msg_allocator
+    network.msg_temp = msg_temp
+
     host_id = add_connection(network, host_endpoint) or_return
     network.host_id = host_id
     network.color = .White
     network.socket = socket
-    network.msg_allocator = msg_allocator
-    network.msg_temp = msg_temp
     network.msg_delete_proc = msg_delete_proc
     network.msg_clone_proc = msg_clone_proc
-    network.net_allocator = net_allocator
-    network.net_temp = net_temp
     network.message_queue = make([dynamic]Message, net_allocator)
     network.snap_state = {}
     return
@@ -243,19 +271,37 @@ close_network :: proc(network: ^Network) {
     delete(network.message_queue)
 }
 
-add_connection :: proc(network: ^Network, endpoint: net.Endpoint) -> (channel_id: int, ok: bool) {
+start_network :: proc(network: ^Network) {
+    network.last_tick = time.tick_now()
+    broadcast_data(network, Internal(Keep_Alive{}))
+    for channel in sa.slice(&network.channels) {
+        fmt.println(channel.endpoint)
+    }
+}
+
+add_connection :: proc(network: ^Network, endpoint: net.Endpoint, this_process := false) -> (channel_id: int, ok: bool) {
     if network.net_allocator == {} {
         return
     }
+
     new_id := network.channels.len
     new_channel := Channel{
         id = i8(new_id),
         endpoint = endpoint,
-        ack_processed = max(u16),
+        seq = max(u16), // 0xFFFF
+        ack = max(u16),
+        ack_processed = max(u16), // 0xFFFF
+        prev_end_seq = max(u16),
         unprocessed = make([dynamic]Message, network.net_allocator),
         recorded_messages = make([dynamic]Message, network.net_allocator),
     }
+
+    if this_process {
+        network.this_id = i8(new_id)
+    }
+
     init_sequence_buffer(network, &new_channel.seq_send) 
+
     for &sequence in new_channel.buf_recv {
         sequence = max(u32)
     }
@@ -267,7 +313,9 @@ add_connection :: proc(network: ^Network, endpoint: net.Endpoint) -> (channel_id
 delete_channel :: proc(network: ^Network, channel: ^Channel) {
     delete_sequence_buffer(network, &channel.seq_send)
     for message in channel.unprocessed {
-        delete_message(network, message)
+        if message != nil {
+            delete_message(network, message)
+        }
     }
     delete(channel.unprocessed)
     delete(channel.recorded_messages)
@@ -296,21 +344,31 @@ send_data:: proc(network: ^Network, data: Data, net_id: int) -> bool {
     return true
 }
 
+send_message :: proc(network: ^Network, message: Message, net_id: int) -> bool {
+    return send_data(network, message, net_id) 
+}
+
 @private
 send_data_to_channel :: proc(network: ^Network, data: Data, channel: ^Channel, should_ack := false) -> net.UDP_Send_Error { 
     packet: Packet
-    packet.header.from = channel.id
+    packet.header.from = network.this_id
     packet.header.color = network.color
-    packet.header.seq = channel.seq
     packet.header.ack = channel.ack
+    packet.header.ack_processed = channel.ack_processed
     packet.header.ack_bits = get_ack_bits(channel.buf_recv, channel.ack)
     packet.header.prev_end_seq = channel.prev_end_seq
     packet.data = data 
 
     // only increment the sequence number if we're sending a message, this is CRUCIAL
     if message, ok := data.(Message); ok {
-        put_message(network, &channel.seq_send, message, channel.seq, network.color)
         channel.seq += 1
+        put_message(network, &channel.seq_send, message, channel.seq, network.color)
+    }
+    packet.header.seq = channel.seq
+
+    if packet.header.seq == 3 || packet.header.seq == 4 || packet.header.seq == 5{
+        // pretend to lose this one
+        return nil
     }
 
     bytes, marshal_err := cbor.marshal_into_bytes(packet, cbor.ENCODE_SMALL, network.net_allocator, network.net_temp)
@@ -321,9 +379,19 @@ send_data_to_channel :: proc(network: ^Network, data: Data, channel: ^Channel, s
 }
 
 poll_for_packets :: proc(network: ^Network) -> (bool, bool) { 
+    time_now := time.tick_now()
+    dt := time.tick_diff(network.last_tick, time_now)
+    network.last_tick = time_now
+    network.tick_accum += dt
+
+    if network.tick_accum > 5 * time.Second{
+        network.tick_accum = 0
+        broadcast_data(network, Internal(Keep_Alive{}))
+    }
+
     for {
         bytes_read, _, recv_err := net.recv_udp(network.socket, buf[:])
-        if bytes_read == 0 {
+        if bytes_read <= 0{
             break
         }
         packet: Packet
@@ -355,14 +423,15 @@ take_state_snapshot :: proc(network: ^Network, data: ^$T, $snapshot_proc: proc(^
 
 get_messages :: proc(network: ^Network) -> []Message {
     for &channel in sa.slice(&network.channels) {
-        channel.ack_processed += u16(len(channel.unprocessed))
         for message in channel.unprocessed {
+            channel.ack_processed += 1
             if message != nil {
                 append(&network.message_queue, message)
             }
         }
+        clear(&channel.unprocessed)
     }
-    return nil
+    return network.message_queue[:]
 }
 
 cleanup_messages :: proc(network: ^Network) {
@@ -374,8 +443,9 @@ cleanup_messages :: proc(network: ^Network) {
 
 @private
 resend_data_to_channel :: proc(network: ^Network, channel: ^Channel, data: Data, sequence: u16, color: Color) -> net.UDP_Send_Error {
+    fmt.printfln("resending %v", sequence)
     packet: Packet
-    packet.header.from = channel.id
+    packet.header.from = network.this_id
     packet.header.color = color
     packet.header.seq = sequence
     packet.header.ack = channel.ack
@@ -407,20 +477,21 @@ paws_less_or_eq :: proc(a, b: u16) -> bool {
 deal_with_message :: proc(network: ^Network, channel: ^Channel, message: Message, header: Header) {
     packet_seq := header.seq
     packet_ack := header.ack
-   
+
     // Snapshot recording logic
     if network.is_recording && !channel.done_recording {
         if channel.marker_received && network.snap_color == header.color {
 
             // Only insert the message into the recording buffer if our main stream is was able to
             if paws_greater_than(packet_seq, channel.ack_processed) &&
-                paws_less_or_eq(packet_seq, channel.record_end_seq) {
+                paws_less_or_eq(packet_seq, channel.record_end_seq) { // this is implicitly true since by definition of what channel.record_end_seq is after the marker is received
                 index := packet_seq - channel.record_start_seq - 1
                 if channel.recorded_messages[index] == nil {
                     clone := clone_message(network, message)
                     channel.recorded_messages[index] = clone
                 }
             }
+
         } else if !channel.marker_received { // cannot have !channel.marker_received and header.color != snap_color
             if paws_greater_than(packet_seq, channel.record_end_seq) {
 
@@ -454,6 +525,7 @@ deal_with_message :: proc(network: ^Network, channel: ^Channel, message: Message
         append(&channel.unprocessed, message)
         channel.ack = packet_seq
     } else if paws_greater_than(packet_seq, channel.ack_processed) {
+        put_buf_recv(&channel.buf_recv, packet_seq)
         index := packet_seq - channel.ack_processed - 1
         if channel.unprocessed[index] == nil {
             channel.unprocessed[index] = message
@@ -466,12 +538,13 @@ deal_with_message :: proc(network: ^Network, channel: ^Channel, message: Message
 }
 
 @private
-deal_with_internal :: proc(network: ^Network, channel: ^Channel, header: Header) {
+deal_with_internal :: proc(network: ^Network, channel: ^Channel, internal: Internal, header: Header) {
     packet_seq := header.seq
     packet_ack := header.ack
     packet_ack_processed := header.ack_processed
     packet_ack_bits := header.ack_bits
 
+    // fmt.printfln("%#v", header)
     if network.is_recording && !channel.marker_received {
         if paws_greater_than(packet_seq, channel.record_end_seq) {
             for _ in 0..<(packet_seq - channel.record_end_seq) {
@@ -541,7 +614,7 @@ first_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
         for _ in 0..<(channel.ack - channel.record_end_seq) {
             append(&channel.recorded_messages, nil)
         }
-    } 
+    }
 
     // For the other channels, we try to initialise the recording buffer with all the unprocessed packets
     for &c in sa.slice(&network.channels) {
@@ -563,12 +636,12 @@ first_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
 
 another_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
     channel.marker_received = true
-    channel.record_end_seq = header.prev_end_seq
-    if paws_greater_than(header.seq, channel.record_end_seq) {
-        for _ in 0..<(channel.record_end_seq - channel.record_end_seq) {
+    if paws_greater_than(header.prev_end_seq, channel.record_end_seq) {
+        for _ in 0..<(header.prev_end_seq - channel.record_end_seq) {
             append(&channel.recorded_messages, nil)
         }
     }
+    channel.record_end_seq = header.prev_end_seq
 }
 
 @private
@@ -582,20 +655,18 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
 
     // Is this the first time I've seen a same colored message during the snapshot recording on this channel
     // Only true when we're recording
-    another_marker_received := network.is_recording && network.color == header.color && channel.marker_received == false
+    another_marker_received := network.is_recording && !channel.marker_received && network.color == header.color
 
     // Check for snapshot conditions
     if is_first_marker_received {
         first_marker(network, channel, header) // essentially sets network.is_recording = true
-    } 
-    
-    if another_marker_received {
+    } else if another_marker_received {
         another_marker(network, channel, header) // essentially sets channel.marker_received = true
     }
 
     switch v in packet.data {
         case Internal:
-            deal_with_internal(network, channel, header)
+            deal_with_internal(network, channel, v, header)
         case Message:
             deal_with_message(network, channel, v, header)
     }
@@ -614,7 +685,8 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
     packet_ack_bits := header.ack_bits
 
     acknowledge(network, &channel.seq_send, packet_ack)
-    if packet_ack > packet_ack_processed {
+    if paws_greater_than(packet_ack, packet_ack_processed){
+        fmt.println(packet_ack - packet_ack_processed)
         for n in 1..=u16(min(32, packet_ack - packet_ack_processed)) {
             ack_minus_n := packet_ack - n
             if int(n) in packet_ack_bits {

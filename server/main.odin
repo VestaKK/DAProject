@@ -41,13 +41,13 @@ main :: proc() {
             }
         }
     }
+
     if bound_address == {} {
         fmt.eprintln("Could not find an IPv4 address for this machine")
         os2.exit(1)
     }
     net.destroy_interfaces(interfaces)
 
-    fmt.println(bound_address)
     server, make_err := net.make_bound_udp_socket(bound_address, 30)
     if make_err != nil {
         fmt.eprintln(net.last_platform_error_string())
@@ -62,9 +62,7 @@ main :: proc() {
         }
 
         packet: sh.Packet
-
         cbor.unmarshal_from_string(transmute(string)buf[:bytes_read], &packet)
-
         deal_with_packet(server, packet, client_endpoint)
     }
 }

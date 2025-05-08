@@ -11,11 +11,13 @@ import "base:intrinsics"
 import "core:flags"
 import rl "vendor:raylib"
 import gp "game_packet"
+import "core:time"
 
 Options :: struct {
     port: int `args:"pos=0,requied" usage:"Client Port"`,
     lobby_id: i64 `args:"pos=1,required" usage:"Lobby ID"`,
     role: Role `args:"pos=2,required" usage:"Role"`,
+    local: bool `args:"pos=3" usage:"LOCALHOST"`
 }
 
 Lobby_Data:: struct {
@@ -102,13 +104,15 @@ _main :: proc() {
     }
 
     // Make socket
+    bound_endpoint := net.Endpoint{bound_address, opt.port}
+    fmt.println(bound_endpoint)
+    
     client, make_err := net.make_bound_udp_socket(bound_address, opt.port)
     if make_err != nil {
         fmt.eprintln(net.last_platform_error_string())
         os2.exit(1)
     }
     defer net.close(client)
-
 
     server_endpoint := net.Endpoint{net.IP4_Address{120, 156, 242, 163}, 1111}
     rl.SetTraceLogLevel(.FATAL)
@@ -137,7 +141,9 @@ _main :: proc() {
             join_scene(&state, client, server_endpoint)
     }
 
-        rl.CloseWindow()
+    play_game(&state)
+
+    rl.CloseWindow()
 }
 
 host_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.Endpoint) {
@@ -162,10 +168,17 @@ host_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
     }
 
     setup_connections :: proc(state: ^State, socket: net.UDP_Socket, response: sh.Start_Lobby_Response) {
-        //state.this_net_id, _  = gp.init_network(&state.network, socket, response.host.endpoint)
-        //for peer_profile in response.players {
-        //    gp.add_connection(&state.network, peer_profile.endpoint)
-        //}
+        state.this_net_id, _  = gp.init_network(
+            &state.network, 
+            socket, 
+            response.host.endpoint,
+            gp.default_delete_proc,
+            gp.default_clone_proc,
+            true
+        )
+        for peer_profile in response.players {
+            gp.add_connection(&state.network, peer_profile.endpoint)
+        }
     }
 
     for !rl.WindowShouldClose() {
@@ -193,17 +206,20 @@ join_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
     }
 
     setup_connections :: proc(state: ^State, socket: net.UDP_Socket, response: sh.Start_Lobby_Response) {
-        fmt.println(response.host)
-        for peer in response.players {
-            fmt.println(peer)
+        state.this_net_id, _  = gp.init_network(
+            &state.network, 
+            socket, 
+            response.host.endpoint,
+            gp.default_delete_proc,
+            gp.default_clone_proc,
+        )
+        for peer_profile in response.players {
+            if peer_profile.assigned_id == state.lobby.assigned_id {
+                gp.add_connection(&state.network, peer_profile.endpoint, true)
+            } else {
+                gp.add_connection(&state.network, peer_profile.endpoint)
+            }
         }
-        //gp.init_network(&state.network, socket, response.host.endpoint)
-        //for peer_profile in response.players {
-        //  net_id, _ := gp.add_connection(&state.network, peer_profile.endpoint)
-        //    if peer_profile.assigned_id == state.lobby.assigned_id {
-        //        state.this_net_id = net_id
-        //    }
-        //}
     }
 
     for !rl.WindowShouldClose() {
@@ -324,4 +340,62 @@ join_lobby :: proc(client: net.UDP_Socket, server_endpoint: net.Endpoint, lobby_
 init_start_lobby :: proc(client: net.UDP_Socket, server_endpoint: net.Endpoint, lobby_data: Lobby_Data) {
     packet := sh.Packet(sh.Start_Lobby_Packet{lobby_id = lobby_data.lobby_id, host_id = lobby_data.assigned_id})
     send_packet(client, server_endpoint, packet)
+}
+
+
+play_game :: proc(s: ^State) {
+    gp.start_network(&s.network)
+    defer gp.close_network(&s.network)
+
+    last_tick := time.tick_now()
+    accum := time.Duration(0)
+    for !rl.WindowShouldClose() {
+        time_now := time.tick_now()
+        dt := time.tick_diff(last_tick, time_now)
+        last_tick = time_now
+        accum += dt
+
+        should_snap, snap_ready := gp.poll_for_packets(&s.network) 
+
+        @static count := 0
+        if rl.IsKeyPressed(.A) {
+            fmt.println("I PRESSED A")
+            ok := gp.send_message(&s.network, gp.Message(count), s.network.host_id)
+            count += 1
+            if !ok {
+                fmt.println("UH OH")
+            }
+        }
+
+        if rl.IsKeyPressed(.B) {
+            fmt.println("I PRESSED B")
+            ok := gp.send_message(&s.network, gp.Message(count), 1)
+        }
+
+        if should_snap || snap_ready {
+        } 
+
+        if (accum > time.Second * 10) {
+            fmt.println("Message Loop")
+            accum = 0
+            messages := gp.get_messages(&s.network)
+            defer gp.cleanup_messages(&s.network)
+
+            for m in messages {
+                switch v in m {
+                    case struct{}:
+                        // do nothign
+                    case int:
+                        fmt.println(v)
+                }
+            }
+        }
+
+
+        rl.BeginDrawing()
+        rl.ClearBackground({200, 200, 140, 255}) 
+        text_width := rl.MeasureText("GAME", 20)
+        rl.DrawText("GAME", (i32(s.window.width) - text_width)/2, i32(s.window.height)/2, 20, {0, 0, 0, 255})
+        rl.EndDrawing()
+    }
 }
