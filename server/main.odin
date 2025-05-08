@@ -60,6 +60,7 @@ main :: proc() {
         if read_err != nil {
             continue
         }
+        fmt.println(client_endpoint)
 
         packet: sh.Packet
         cbor.unmarshal_from_string(transmute(string)buf[:bytes_read], &packet)
@@ -68,14 +69,15 @@ main :: proc() {
 }
 
 
-init_lobby :: proc(data: sh.Create_Lobby_Packet, host_endpoint: net.Endpoint) -> Lobby {
+init_lobby :: proc(data: sh.Create_Lobby_Packet, public_endpoint, private_endpoint: net.Endpoint) -> Lobby {
     new_lobby := Lobby{
         lobby_name = data.lobby_name,
         host_name = data.host_name,
     }
 
     new_lobby.host_profile = sh.Private_Profile{
-        endpoint = host_endpoint,
+        publc_endpoint = public_endpoint,
+        endpoint = private_endpoint,
         assigned_id = new_lobby.id_counter,
         user_name = new_lobby.host_name,
     }
@@ -107,7 +109,7 @@ deal_with_packet :: proc(server: net.UDP_Socket, packet: sh.Packet, remote: net.
                 return
             }
 
-            new_lobby := init_lobby(data, remote)
+            new_lobby := init_lobby(data, remote, data.host_endpoint)
             lobbies[data.lobby_id] = new_clone(new_lobby)
             success_response := sh.Response(sh.Create_Response{assigned_id = new_lobby.host_profile.assigned_id})
             send_response(server, remote, success_response)
@@ -138,7 +140,8 @@ deal_with_packet :: proc(server: net.UDP_Socket, packet: sh.Packet, remote: net.
 
             assigned_id := lobby.id_counter
             lobby.joined[lobby.joined_count] = sh.Private_Profile{ 
-                endpoint = remote,
+                publc_endpoint = remote,
+                endpoint = data.join_endpoint,
                 assigned_id = assigned_id,
                 user_name = data.join_name,
             }
@@ -180,10 +183,10 @@ deal_with_packet :: proc(server: net.UDP_Socket, packet: sh.Packet, remote: net.
 
             // Send Start Lobby Response
             success_response := sh.Response(sh.Start_Lobby_Response{host = lobby.host_profile, players = lobby.joined[:lobby.joined_count]})
-            send_response(server, lobby.host_profile.endpoint, success_response)
+            send_response(server, lobby.host_profile.publc_endpoint, success_response)
 
             for player_profile in lobby.joined[:lobby.joined_count] {
-                send_response(server, player_profile.endpoint, success_response)
+                send_response(server, player_profile.publc_endpoint, success_response)
             }
 
             _, lobby_data := delete_key(&lobbies, data.lobby_id)

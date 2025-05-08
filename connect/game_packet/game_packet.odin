@@ -7,6 +7,7 @@ import "base:runtime"
 import "core:time"
 import "core:fmt"
 import "core:strings"
+import "core:slice"
 
 SEQUENCE_BUFFER_SIZE :: 1024
 MAX_CONNECTIONS :: 4
@@ -42,15 +43,24 @@ Network :: struct {
 default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) {
     switch v in message {
         case struct{}:
-        case int:
+        case int: 
+        case string:
+            delete(v)
+        case []int:
+            delete(v)
     }
 }
+
 default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) -> Message {
     switch v in message {
         case struct{}:
             return v
         case int:
             return v
+        case string:
+            return strings.clone(v, allocator) 
+        case []int:
+            return slice.clone(v)
     }
     return nil
 }
@@ -217,6 +227,8 @@ Internal :: union {
 Message :: union {
     struct{},
     int,
+    string,
+    []int
 }
 
 Data :: union #shared_nil {

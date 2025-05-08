@@ -17,7 +17,6 @@ Options :: struct {
     port: int `args:"pos=0,requied" usage:"Client Port"`,
     lobby_id: i64 `args:"pos=1,required" usage:"Lobby ID"`,
     role: Role `args:"pos=2,required" usage:"Role"`,
-    local: bool `args:"pos=3" usage:"LOCALHOST"`
 }
 
 Lobby_Data:: struct {
@@ -119,7 +118,7 @@ _main :: proc() {
 
     switch opt.role {
         case .Host:
-            lobby_data, create_ok := create_lobby(client, server_endpoint, opt.lobby_id, "My Lobby", "Anthony Albanese")
+            lobby_data, create_ok := create_lobby(client, server_endpoint, bound_endpoint, opt.lobby_id, "My Lobby", "Anthony Albanese")
             if !create_ok {
                 fmt.eprintln(last_error_string)
                 os2.exit(1)
@@ -130,7 +129,7 @@ _main :: proc() {
             host_scene(&state, client, server_endpoint)
 
         case .Join:
-            lobby_data, join_ok := join_lobby(client, server_endpoint, opt.lobby_id, "Tony Abbott")
+            lobby_data, join_ok := join_lobby(client, server_endpoint, bound_endpoint, opt.lobby_id, "Tony Abbott")
             if !join_ok {
                 fmt.eprintln(last_error_string)
                 os2.exit(1)
@@ -323,15 +322,15 @@ expect_response :: proc(client: net.UDP_Socket, $T: typeid) -> (T, bool) where i
     return data, true
 }
 
-create_lobby :: proc(client: net.UDP_Socket, server_endpoint: net.Endpoint, lobby_id: i64, lobby_name: string, host_name: string) -> (lobby_data: Lobby_Data, ok: bool) {
-    packet := sh.Packet(sh.Create_Lobby_Packet{lobby_id, lobby_name, host_name})
+create_lobby :: proc(client: net.UDP_Socket, server_endpoint, bound_endpoint: net.Endpoint, lobby_id: i64, lobby_name: string, host_name: string) -> (lobby_data: Lobby_Data, ok: bool) {
+    packet := sh.Packet(sh.Create_Lobby_Packet{lobby_id, lobby_name, host_name, bound_endpoint})
     send_packet(client, server_endpoint, packet)
     cl_response := expect_response(client, sh.Create_Response) or_return
     return {.Host, lobby_id, cl_response.assigned_id, lobby_name, host_name, host_name}, true
 }
 
-join_lobby :: proc(client: net.UDP_Socket, server_endpoint: net.Endpoint, lobby_id: i64, join_name: string) -> (lobby_data: Lobby_Data, ok: bool) {
-    packet := sh.Packet(sh.Join_Lobby_Packet{lobby_id, join_name})
+join_lobby :: proc(client: net.UDP_Socket, server_endpoint, bound_endpoint: net.Endpoint, lobby_id: i64, join_name: string) -> (lobby_data: Lobby_Data, ok: bool) {
+    packet := sh.Packet(sh.Join_Lobby_Packet{lobby_id, join_name, bound_endpoint})
     send_packet(client, server_endpoint, packet)
     jl_response := expect_response(client, sh.Join_Lobby_Response) or_return
     return {.Join, lobby_id, jl_response.assigned_id, jl_response.lobby_name, join_name, jl_response.host_name}, true
@@ -350,6 +349,7 @@ play_game :: proc(s: ^State) {
     last_tick := time.tick_now()
     accum := time.Duration(0)
     for !rl.WindowShouldClose() {
+
         time_now := time.tick_now()
         dt := time.tick_diff(last_tick, time_now)
         last_tick = time_now
@@ -377,12 +377,13 @@ play_game :: proc(s: ^State) {
 
         if (accum > time.Second * 10) {
             fmt.println("Message Loop")
+
             accum = 0
             messages := gp.get_messages(&s.network)
             defer gp.cleanup_messages(&s.network)
 
             for m in messages {
-                switch v in m {
+                #partial switch v in m {
                     case struct{}:
                         // do nothign
                     case int:

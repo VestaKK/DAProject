@@ -5,6 +5,7 @@ import "core:net"
 MAX_PLAYER_COUNT :: 4
 
 Private_Profile :: struct {
+    publc_endpoint: net.Endpoint,
     endpoint: net.Endpoint,
     assigned_id: i64,
     user_name: string,
@@ -14,11 +15,13 @@ Create_Lobby_Packet :: struct {
     lobby_id: i64,
     lobby_name: string,
     host_name: string,
+    host_endpoint: net.Endpoint,
 }
 
 Join_Lobby_Packet :: struct {
     lobby_id: i64,
     join_name: string,
+    join_endpoint: net.Endpoint,
 }
 
 Start_Lobby_Packet :: struct {
