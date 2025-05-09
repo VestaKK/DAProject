@@ -52,6 +52,9 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
         case Player_Move:
         case Placed_Fence:
         case Attack_Fence:
+        case Attack_Player:
+        case Dead_Player:
+        case Player_Start:
     }
 }
 
@@ -81,6 +84,18 @@ default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_
                 id = v.id,
                 health = v.health,
                 destroyed = v.destroyed,
+            }
+        case Attack_Player:
+            return Attack_Player{
+                id = v.id,
+            }
+        case Dead_Player:
+            return Dead_Player{
+                id = v.id,
+            }
+        case Player_Start:
+            return Player_Start{
+                id = v.id,
             }
     }
     return nil
@@ -252,7 +267,10 @@ Message :: union {
     []int,
     Player_Move,
     Placed_Fence,
-    Attack_Fence
+    Attack_Fence,
+    Attack_Player,
+    Dead_Player,
+    Player_Start
 }
 
 Data :: union #shared_nil {
@@ -272,7 +290,8 @@ Player_Move :: struct {
     id: i64,
     attacking: bool,
     placing_fence: bool,
-    direction: i32
+    direction: i32,
+    health: i32
 }
 
 Placed_Fence :: struct {
@@ -285,6 +304,18 @@ Attack_Fence :: struct {
     id: [2]int,
     health: int,
     destroyed: bool
+}
+
+Attack_Player :: struct {
+    id: i64
+}
+
+Dead_Player :: struct {
+    id: i64
+}
+
+Player_Start :: struct {
+    id: i64
 }
 
 

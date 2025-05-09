@@ -440,13 +440,13 @@ play_game :: proc(s: ^State) {
             continue
         }
         if i == 0 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 77, 60, 60}, {255, 255, 255, 255}, 0, false, false, 0}
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 77, 60, 60}, {255, 255, 255, 255}, 0, false, false, 0, 0}
         } else if i == 1 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 77, 60, 60}, {196, 238, 255, 255}, 1, false, false, 0}
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 77, 60, 60}, {196, 238, 255, 255}, 1, false, false, 0, 0}
         } else if i == 2 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 467, 60, 60}, {255, 196, 227, 255}, 2,false, false, 0}
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 467, 60, 60}, {255, 196, 227, 255}, 2,false, false, 0, 0}
         } else if i == 3 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 467, 60, 60}, {255, 236, 196, 255}, 3, false, false, 0}
+            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 467, 60, 60}, {255, 236, 196, 255}, 3, false, false, 0, 0}
         }
     }
 
@@ -464,6 +464,8 @@ play_game :: proc(s: ^State) {
             player.pos = {967, 467}
             player.color = {255, 236, 196, 255}
     }
+
+    gp.broadcast_message(&s.network, gp.Message(gp.Player_Start{s.lobby.assigned_id}))
 
     for !rl.WindowShouldClose() {
 
@@ -488,10 +490,8 @@ play_game :: proc(s: ^State) {
 
             for m in messages {
                 #partial switch v in m {
-                    case struct{}:
-                        // do nothign
-                    case int:
-                        fmt.println(v)
+                    case gp.Player_Start:
+                        other_players[v.id].health = 100
                     case gp.Player_Move:
                         other_players[v.id] = v
                     case gp.Placed_Fence:
@@ -510,13 +510,28 @@ play_game :: proc(s: ^State) {
                             }
                             i += 1
                         }
-                    }
-                    
+                    case gp.Attack_Player:
+                        if v.id == s.lobby.assigned_id {
+                            player.health -= 1
+                            if player.health <= 0 {
+                                player.health = 0
+                                player.color = rl.RED
+                                gp.broadcast_message(&s.network, gp.Message(gp.Dead_Player{s.lobby.assigned_id}))
+                            }
+                        } 
+                    case gp.Dead_Player:
+                        other_players[v.id].health = 0
+                        other_players[v.id].color = rl.RED
                 }
+                    
             }
+        }
 
         player.moved = false
-        move_player(game_dt)
+
+        if player.health > 0 {
+            move_player(game_dt)
+        }
         player.dest = rl.Rectangle{player.pos[0], player.pos[1], 60, 60}
         camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
 
@@ -525,6 +540,22 @@ play_game :: proc(s: ^State) {
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
         rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
+
+        if player.health <= 0 {
+            rl.DrawText("You have died", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
+        }
+
+        // check if other players are alive
+        all_dead := true
+        for other_player in other_players {
+            if other_player.id != s.lobby.assigned_id && other_player.health > 0 {
+                all_dead = false
+            }
+        }
+
+        if all_dead {
+            rl.DrawText("Winner", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
+        }
 
         // draw health bar
         rl.DrawText(rl.TextFormat("%i/100", player.health), i32(player.pos.x - 195), i32(player.pos.y - 115), 12, rl.RED);
@@ -556,7 +587,6 @@ play_game :: proc(s: ^State) {
                     if fence.health <= 0 {
                         unordered_remove(&fences, i)
                         attack_fence.destroyed = true
-                        fmt.println("FENCE DESTROYED 1")
                     }
                     ok := gp.broadcast_message(&s.network, gp.Message(attack_fence))
                     if !ok {
@@ -566,13 +596,27 @@ play_game :: proc(s: ^State) {
                 }
                 i += 1
             }
+            for &other_player in other_players {
+                if other_player.id == s.lobby.assigned_id {
+                    continue
+                }
+                if player.pos[0] < other_player.dest.x + 20 && player.pos[0] > other_player.dest.x - 20 && player.pos[1] < other_player.dest.y + 20 && player.pos[1] > other_player.dest.y - 20{
+                    other_player.health -= 1
+                    attack_player := gp.Attack_Player{other_player.id}
+                    ok := gp.broadcast_message(&s.network, gp.Message(attack_player))
+                    if !ok {
+                        fmt.println("UH OH")
+                    }
+                    break
+                }
+            }
         } else if player.placing_fence {
-            player_with_fence(gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, false, false, player.direction}, character, fenceT, &current_fence)
+            player_with_fence(gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, false, false, player.direction, player.health}, character, fenceT, &current_fence)
         } else {
             rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
         }
 
-        player_move := gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, player.attacking, player.placing_fence, player.direction}
+        player_move := gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, player.attacking, player.placing_fence, player.direction, player.health}
         if player.attacking {
             player_move.src = player.attacking_src
         }
