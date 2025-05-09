@@ -50,6 +50,8 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
         case []int:
             delete(v)
         case Player_Move:
+        case Placed_Fence:
+        case Attack_Fence:
     }
 }
 
@@ -68,6 +70,17 @@ default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_
                 src = v.src,
                 dest = v.dest,
                 color = v.color,
+            }
+        case Placed_Fence:
+            return Placed_Fence{
+                src = v.src,
+                dest = v.dest,
+            }
+        case Attack_Fence:
+            return Attack_Fence{
+                id = v.id,
+                health = v.health,
+                destroyed = v.destroyed,
             }
     }
     return nil
@@ -237,7 +250,9 @@ Message :: union {
     int,
     string,
     []int,
-    Player_Move
+    Player_Move,
+    Placed_Fence,
+    Attack_Fence
 }
 
 Data :: union #shared_nil {
@@ -258,6 +273,18 @@ Player_Move :: struct {
     attacking: bool,
     placing_fence: bool,
     direction: i32
+}
+
+Placed_Fence :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle,
+    id: [2]int
+}
+
+Attack_Fence :: struct {
+    id: [2]int,
+    health: int,
+    destroyed: bool
 }
 
 
@@ -722,7 +749,7 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
 
     acknowledge(network, &channel.seq_send, packet_ack)
     if paws_greater_than(packet_ack, packet_ack_processed){
-        fmt.println(packet_ack - packet_ack_processed)
+        //fmt.println(packet_ack - packet_ack_processed)
         for n in 1..=u16(min(32, packet_ack - packet_ack_processed)) {
             ack_minus_n := packet_ack - n
             if int(n) in packet_ack_bits {

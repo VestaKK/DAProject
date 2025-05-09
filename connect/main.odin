@@ -86,7 +86,8 @@ Player :: struct {
 Fence :: struct {
     src: rl.Rectangle,
     dest: rl.Rectangle,
-    health: int
+    health: int,
+    id: [2]int
 }
 
 // Game State intialization
@@ -481,8 +482,6 @@ play_game :: proc(s: ^State) {
         } 
 
         if (accum > time.Second / 60) {
-            fmt.println("Message Loop")
-
             accum = 0
             messages := gp.get_messages(&s.network)
             defer gp.cleanup_messages(&s.network)
@@ -495,9 +494,26 @@ play_game :: proc(s: ^State) {
                         fmt.println(v)
                     case gp.Player_Move:
                         other_players[v.id] = v
+                    case gp.Placed_Fence:
+                        if v.id[0] != int(s.lobby.assigned_id) {
+                            append(&fences, Fence{v.src, v.dest, 20, {v.id[0], v.id[1]}})
+                        }
+                    case gp.Attack_Fence:
+                        i := 0
+                        for &fence in fences {
+                            if fence.id == v.id {
+                                if v.destroyed {
+                                    unordered_remove(&fences, i)
+                                    break
+                                }
+                                fence.health = v.health
+                            }
+                            i += 1
+                        }
+                    }
+                    
                 }
             }
-        }
 
         player.moved = false
         move_player(game_dt)
@@ -536,8 +552,15 @@ play_game :: proc(s: ^State) {
             for &fence in fences {
                 if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
                     fence.health -= int(1)
+                    attack_fence := gp.Attack_Fence{fence.id, fence.health, false}
                     if fence.health <= 0 {
                         unordered_remove(&fences, i)
+                        attack_fence.destroyed = true
+                        fmt.println("FENCE DESTROYED 1")
+                    }
+                    ok := gp.broadcast_message(&s.network, gp.Message(attack_fence))
+                    if !ok {
+                        fmt.println("UH OH")
                     }
                     break
                 }
@@ -562,9 +585,15 @@ play_game :: proc(s: ^State) {
         } 
 
         if player.place_fence {
-            append(&fences, Fence{current_fence.src, current_fence.dest, 20})
+            index := len(fences) - 1
+            append(&fences, Fence{current_fence.src, current_fence.dest, 20, {int(s.lobby.assigned_id), index}})
             player.place_fence = false
             last_fence_dest = current_fence.dest
+            placed_fence := gp.Placed_Fence{current_fence.src, current_fence.dest, {int(s.lobby.assigned_id), index}}
+            ok := gp.broadcast_message(&s.network, gp.Message(placed_fence))
+            if !ok {
+                fmt.println("UH OH")
+            }
         }
         
         rl.EndDrawing()
