@@ -13,6 +13,7 @@ import rl "vendor:raylib"
 import gp "game_packet"
 import "core:time"
 import lg "core:math/linalg"
+import "core:slice"
 
 Options :: struct {
     port: int `args:"pos=0,requied" usage:"Client Port"`,
@@ -58,9 +59,13 @@ State :: struct {
     this_net_id: int,
 }
 
+Game_State :: struct {
+    fences: []gp.Fence,
+    player: Player
+}
+
 // Game Structs
 Player :: struct {
-    id: i64,
     using pos: [2]f32,
     facing: [2]f32,
     speed: f32,
@@ -80,14 +85,8 @@ Player :: struct {
     color: rl.Color,
     health: i32,
     moved: bool,
-    attack_done: bool
-}
-
-Fence :: struct {
-    src: rl.Rectangle,
-    dest: rl.Rectangle,
-    health: int,
-    id: [2]int
+    attack_done: bool,
+    quadrant: [dynamic][4]f32
 }
 
 // Game State intialization
@@ -97,39 +96,30 @@ GRID_WIDTH :: 20
 CELL_SIZE :: 16
 CANVAS_SIZE :: GRID_WIDTH * CELL_SIZE
 
+QUANDRANT_ONE :: [4]f32{66, 66, 567, 293}
+QUANDRANT_TWO :: [4]f32{567, 66, 1047, 293}
+QUANDRANT_THREE :: [4]f32{66, 293, 567, 560}
+QUANDRANT_FOUR :: [4]f32{567, 293, 1047, 560}
+
 camera := rl.Camera2D{}
 
-player := Player{
-    id = 1,
-    pos = {80, 77},
-    speed = 7,
-    src = rl.Rectangle{0, 0, 48, 48},
-    attacking_src = rl.Rectangle{5, 0, 48, 48},
-    moving = false, 
-    player_up = false, 
-    player_down = false,  
-    player_left = false,  
-    player_right = false,
-    player_frame = 0,
-    attacking = false,
-    place_fence = false,
-    placing_fence = false,
-    color = rl.WHITE,
-    health = 100,
-    moved = false,
-    attack_done = false
-}
+player := Player{}
 
 framecount := 0
 
-fences: [dynamic]Fence
+fences: [dynamic]gp.Fence
 
-current_fence := Fence{
-    src = rl.Rectangle{0, 48, 16, 16},
+game_state := Game_State{
+    fences = fences[:],
+    player = player
+}
+
+current_fence := gp.Fence{
     dest = rl.Rectangle{0, 0, 20, 20}
 }
 
 last_fence_dest := rl.Rectangle{}
+fence_src := rl.Rectangle{0, 48, 16, 16}
 
 // Response scratch buffer
 buf: [1024]byte
@@ -142,7 +132,7 @@ _main :: proc() {
     // Game State
     WINDOW_TITLE :: "Distributed Algorithms Project"
     WINDOW_HEIGHT :: 500
-    WINDOW_WIDTH :: 500
+    WINDOW_WIDTH :: 1000
     state: State
     state.window.height = WINDOW_HEIGHT
     state.window.width = WINDOW_WIDTH
@@ -415,6 +405,16 @@ init_start_lobby :: proc(client: net.UDP_Socket, server_endpoint: net.Endpoint, 
     send_packet(client, server_endpoint, packet)
 }
 
+send_game_message :: proc(s: ^State, message: gp.Message, destination: int) {
+    ok := gp.send_message(&s.network, message, destination)
+    if !ok { fmt.println("[error] Failed to send message: %v to destination: %v", message, destination) }
+}
+
+broadcast_game_message :: proc(s: ^State, message: gp.Message) {
+    ok := gp.broadcast_message(&s.network, message)
+    if !ok { fmt.println("[error] Failed to broadcast message: %v", message) }
+}
+
 
 play_game :: proc(s: ^State) {
     gp.start_network(&s.network)
@@ -424,7 +424,6 @@ play_game :: proc(s: ^State) {
     accum := time.Duration(0)
     game_time := rl.GetTime()
 
-    rl.InitWindow(WIDTH, HEIGHT, "Game")
     rl.SetTargetFPS(60)
 
     background := rl.LoadTexture("./map.png")
@@ -433,39 +432,15 @@ play_game :: proc(s: ^State) {
     fenceT := rl.LoadTexture("./Fences.png")
     camera.zoom = f32(WIDTH) / CANVAS_SIZE
 
-    other_players := [4]gp.Player_Move{}
+    initialise_player(i64(s.network.this_id), s)
+    other_players := initialise_other_players(i64(s.network.this_id))
 
-    for i in 0 ..= 3 {
-        if i64(i) == s.lobby.assigned_id {
-            continue
-        }
-        if i == 0 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 77, 60, 60}, {255, 255, 255, 255}, 0, false, false, 0, 0}
-        } else if i == 1 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 77, 60, 60}, {196, 238, 255, 255}, 1, false, false, 0, 0}
-        } else if i == 2 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 467, 60, 60}, {255, 196, 227, 255}, 2,false, false, 0, 0}
-        } else if i == 3 {
-            other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 467, 60, 60}, {255, 236, 196, 255}, 3, false, false, 0, 0}
-        }
-    }
+    quadrant_fences := []gp.Fence{}
+    quadrant_fences = {}
+    fence_update := false
+    prev_quad := s.network.this_id
 
-    switch s.lobby.assigned_id {
-        case 0:
-            player.pos = {80, 77}
-            player.color = {255, 255, 255, 255}
-        case 1:
-            player.pos = {967, 77}
-            player.color = {196, 238, 255, 255}
-        case 2:
-            player.pos = {80, 467}
-            player.color = {255, 196, 227, 255}
-        case 3:
-            player.pos = {967, 467}
-            player.color = {255, 236, 196, 255}
-    }
-
-    gp.broadcast_message(&s.network, gp.Message(gp.Player_Start{s.lobby.assigned_id}))
+    broadcast_game_message(s, gp.Message(gp.Player_Start{i64(s.network.this_id)}))
 
     for !rl.WindowShouldClose() {
 
@@ -476,7 +451,6 @@ play_game :: proc(s: ^State) {
         curr := rl.GetTime()
         game_dt := game_time - rl.GetTime()
         game_time = curr
-
 
         should_snap, snap_ready := gp.poll_for_packets(&s.network) 
 
@@ -495,13 +469,15 @@ play_game :: proc(s: ^State) {
                     case gp.Player_Move:
                         other_players[v.id] = v
                     case gp.Placed_Fence:
-                        if v.id[0] != int(s.lobby.assigned_id) {
-                            append(&fences, Fence{v.src, v.dest, 20, {v.id[0], v.id[1]}})
+                        if v.id[0] != int(s.network.this_id) {
+                            append(&fences, gp.Fence{v.dest, 20, {v.id[0], len(fences)}})
+                            fence_update = true
                         }
                     case gp.Attack_Fence:
                         i := 0
                         for &fence in fences {
                             if fence.id == v.id {
+                                fence_update = true
                                 if v.destroyed {
                                     unordered_remove(&fences, i)
                                     break
@@ -511,17 +487,22 @@ play_game :: proc(s: ^State) {
                             i += 1
                         }
                     case gp.Attack_Player:
-                        if v.id == s.lobby.assigned_id {
+                        if v.id == i64(s.network.this_id) {
                             player.health -= 1
                             if player.health <= 0 {
                                 player.health = 0
                                 player.color = rl.RED
-                                gp.broadcast_message(&s.network, gp.Message(gp.Dead_Player{s.lobby.assigned_id}))
+                                broadcast_game_message(s, gp.Message(gp.Dead_Player{i64(s.network.this_id)}))
                             }
                         } 
                     case gp.Dead_Player:
                         other_players[v.id].health = 0
                         other_players[v.id].color = rl.RED
+                    case gp.Send_Fences:
+                        quadrant_fences = v.fences
+                    case gp.Request_Fences:
+                        send_fences := gp.Send_Fences{fences[:]}
+                        send_game_message(s, gp.Message(send_fences), int(v.id))
                 }
                     
             }
@@ -529,30 +510,51 @@ play_game :: proc(s: ^State) {
 
         player.moved = false
 
-        if player.health > 0 {
-            move_player(game_dt)
+        // send fences to relevant players
+        if fence_update {
+            for i in 0 ..= s.network.channels.len - 1 {
+                if other_players[i].id != i64(s.network.this_id) {
+                    quadrant := check_quadrant_owner({other_players[i].dest.x, other_players[i].dest.y}, s)
+                    if quadrant == int(s.network.this_id) {
+                        send_fences := gp.Send_Fences{fences[:]}
+                        send_game_message(s, gp.Message(send_fences), int(other_players[i].id))
+                    }
+                }
+            }
+            fence_update = false
         }
-        player.dest = rl.Rectangle{player.pos[0], player.pos[1], 60, 60}
-        camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
+
+        // check if player is in a different quadrant, request fences if so
+        quadrant_owner := check_quadrant_owner(player.pos, s)
+        if quadrant_owner != int(prev_quad) && quadrant_owner != int(s.network.this_id) {
+            request_fences := gp.Request_Fences{i64(s.network.this_id)}
+            send_game_message(s, gp.Message(request_fences), quadrant_owner)
+            prev_quad = i8(quadrant_owner)
+        }
+
+        // if the player is alive, check movement
+        if player.health > 0 {
+            move_player(game_dt, s, quadrant_owner, quadrant_fences)
+            camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
+        }
 
         rl.BeginDrawing()
-
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
         rl.DrawTexture(background, 1, 1, {255, 255, 255, 255})
 
+        // If player is dead, draw message
         if player.health <= 0 {
             rl.DrawText("You have died", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
         }
 
-        // check if other players are alive
+        // Check if any other players are alive
         all_dead := true
         for other_player in other_players {
-            if other_player.id != s.lobby.assigned_id && other_player.health > 0 {
+            if other_player.id != i64(s.network.this_id) && other_player.health > 0 {
                 all_dead = false
             }
         }
-
         if all_dead {
             rl.DrawText("Winner", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
         }
@@ -560,86 +562,87 @@ play_game :: proc(s: ^State) {
         // draw health bar
         rl.DrawText(rl.TextFormat("%i/100", player.health), i32(player.pos.x - 195), i32(player.pos.y - 115), 12, rl.RED);
 
-        for fence in fences {
-            rl.DrawTexturePro(fenceT, fence.src, fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        // draw fences for own quadrant and quadrant currently in
+        draw_fences(fences[:], fenceT)
+        draw_fences(quadrant_fences, fenceT)
+
+        // draw all other players, except this player
+        for i in 0 ..= s.network.channels.len - 1 {
+            if other_players[i].id != i64(s.network.this_id) {
+                if other_players[i].attacking {
+                    rl.DrawTexturePro(characterAttack, other_players[i].src, other_players[i].dest, {other_players[i].dest.width, other_players[i].dest.height}, 0, other_players[i].color)
+                } else if other_players[i].placing_fence {
+                    player_with_fence(other_players[i], character, fenceT, &current_fence)
+                } else {
+                    rl.DrawTexturePro(character, other_players[i].src, other_players[i].dest, {other_players[i].dest.width, other_players[i].dest.height}, 0, other_players[i].color)
+                }
+            }
         }
 
-        for other_player in other_players {
-            if other_player.id == s.lobby.assigned_id {
-                continue
-            }
-            if other_player.attacking {
-                rl.DrawTexturePro(characterAttack, other_player.src, other_player.dest, {other_player.dest.width, other_player.dest.height}, 0, other_player.color)
-            } else if other_player.placing_fence {
-                player_with_fence(other_player, character, fenceT, &current_fence)
-            } else {
-                rl.DrawTexturePro(character, other_player.src, other_player.dest, {other_player.dest.width, other_player.dest.height}, 0, other_player.color)
-            }
-        }
-
+        // draw this player
         if player.attacking {
             rl.DrawTexturePro(characterAttack, player.attacking_src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
-            i := 0
-            for &fence in fences {
-                if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
-                    fence.health -= int(1)
-                    attack_fence := gp.Attack_Fence{fence.id, fence.health, false}
-                    if fence.health <= 0 {
+
+            // check fence hits
+            if quadrant_owner == int(s.network.this_id) {
+                i := handle_fence_hit(fences[:])
+                if i != -1 {
+                    fence_update = true
+                    if fences[i].health <= 0 {
                         unordered_remove(&fences, i)
+                    }
+                }
+            } else {
+                i := handle_fence_hit(quadrant_fences)
+                if i != -1 {
+                    attack_fence := gp.Attack_Fence{quadrant_fences[i].id, quadrant_fences[i].health, false}
+                    if quadrant_fences[i].health <= 0 {
                         attack_fence.destroyed = true
                     }
-                    ok := gp.broadcast_message(&s.network, gp.Message(attack_fence))
-                    if !ok {
-                        fmt.println("UH OH")
-                    }
-                    break
+                    send_game_message(s, gp.Message(attack_fence), quadrant_owner)
                 }
-                i += 1
             }
+
+            // check player hits
             for &other_player in other_players {
-                if other_player.id == s.lobby.assigned_id {
-                    continue
-                }
-                if player.pos[0] < other_player.dest.x + 20 && player.pos[0] > other_player.dest.x - 20 && player.pos[1] < other_player.dest.y + 20 && player.pos[1] > other_player.dest.y - 20{
-                    other_player.health -= 1
-                    attack_player := gp.Attack_Player{other_player.id}
-                    ok := gp.broadcast_message(&s.network, gp.Message(attack_player))
-                    if !ok {
-                        fmt.println("UH OH")
+                if other_player.id != i64(s.network.this_id) {
+                    if player.pos[0] < other_player.dest.x + 20 && player.pos[0] > other_player.dest.x - 20 && player.pos[1] < other_player.dest.y + 20 && player.pos[1] > other_player.dest.y - 20{
+                        other_player.health -= 1
+                        attack_player := gp.Attack_Player{other_player.id}
+                        broadcast_game_message(s, gp.Message(attack_player))
+                        break
                     }
-                    break
                 }
             }
         } else if player.placing_fence {
-            player_with_fence(gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, false, false, player.direction, player.health}, character, fenceT, &current_fence)
+            player_with_fence(gp.Player_Move{player.src, player.dest, player.color, i64(s.network.this_id), false, false, player.direction, player.health}, character, fenceT, &current_fence)
         } else {
             rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
         }
 
-        player_move := gp.Player_Move{player.src, player.dest, player.color, s.lobby.assigned_id, player.attacking, player.placing_fence, player.direction, player.health}
+        // check if a player has placed a fence
+        if player.place_fence {
+            index := len(fences) - 1
+            player.place_fence = false
+            last_fence_dest = current_fence.dest
+            if quadrant_owner != int(i64(s.network.this_id)) {
+                placed_fence := gp.Placed_Fence{current_fence.dest, {int(i64(s.network.this_id)), index}}
+                send_game_message(s, gp.Message(placed_fence), quadrant_owner)
+            } else {
+                append(&fences, gp.Fence{current_fence.dest, 20, {int(i64(s.network.this_id)), index}})
+                fence_update = true
+            }
+        }
+
+        // create message to send to other players
+        player_move := gp.Player_Move{player.src, player.dest, player.color, i64(s.network.this_id), player.attacking, player.placing_fence, player.direction, player.health}
         if player.attacking {
             player_move.src = player.attacking_src
         }
-
         if(player.moved || player.placing_fence || player.attacking || player.attack_done) {
-            ok := gp.broadcast_message(&s.network, gp.Message(player_move))
-            if !ok {
-                fmt.println("UH OH")
-            }
+            broadcast_game_message(s, gp.Message(player_move))
         } 
 
-        if player.place_fence {
-            index := len(fences) - 1
-            append(&fences, Fence{current_fence.src, current_fence.dest, 20, {int(s.lobby.assigned_id), index}})
-            player.place_fence = false
-            last_fence_dest = current_fence.dest
-            placed_fence := gp.Placed_Fence{current_fence.src, current_fence.dest, {int(s.lobby.assigned_id), index}}
-            ok := gp.broadcast_message(&s.network, gp.Message(placed_fence))
-            if !ok {
-                fmt.println("UH OH")
-            }
-        }
-        
         rl.EndDrawing()
 
         player.moving = false
@@ -648,31 +651,42 @@ play_game :: proc(s: ^State) {
         framecount += 1
     }
 
+    save_game_state()
+    fmt.println(game_state)
+
+    // clean up
     rl.UnloadTexture(fenceT)
     rl.UnloadTexture(background)
     rl.UnloadTexture(character)
     rl.UnloadTexture(characterAttack)
-    rl.CloseWindow()
+    delete(fences)
+    delete(player.quadrant)
+
 }
 
 // Game Logic
 
-player_with_fence :: proc(player: gp.Player_Move, character: rl.Texture2D, fenceT: rl.Texture2D, current_fence: ^Fence) {
+save_game_state :: proc() {
+    game_state.fences = slice.clone(fences[:])
+    game_state.player = player
+}
+
+player_with_fence :: proc(player: gp.Player_Move, character: rl.Texture2D, fenceT: rl.Texture2D, current_fence: ^gp.Fence) {
     if player.direction == 0 {
         rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
         current_fence.dest = rl.Rectangle{player.dest.x + 20, player.dest.y + 25, 20, 20}
-        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(fenceT, fence_src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
     } else if player.direction == 1 {
         current_fence.dest = rl.Rectangle{player.dest.x + 20, player.dest.y + 15, 20, 20}
-        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(fenceT, fence_src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
     } else if player.direction == 2 {
         current_fence.dest = rl.Rectangle{player.dest.x + 15, player.dest.y + 20, 20, 20}
-        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(fenceT, fence_src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
     } else if player.direction == 3 {
         current_fence.dest = rl.Rectangle{player.dest.x + 25, player.dest.y + 20, 20, 20}
-        rl.DrawTexturePro(fenceT, current_fence.src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+        rl.DrawTexturePro(fenceT, fence_src, current_fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
         rl.DrawTexturePro(character, player.src, player.dest, {player.dest.width, player.dest.height}, 0, player.color)
     } 
 }
@@ -701,7 +715,7 @@ get_ani :: proc(player: Player) -> rl.Color {
     return {255, 0, 0, 255}
 }
 
-move_player :: proc(dt: f64) {
+move_player :: proc(dt: f64, s: ^State, quadrant_owner: int, quadrant_fences: []gp.Fence) {
     
     grid_speed :: proc(speed: f32) -> f32 {
         return CELL_SIZE * speed
@@ -788,13 +802,13 @@ move_player :: proc(dt: f64) {
         dir_norm := lg.normalize(dir)
         next_pos := player.pos + (dir_norm * grid_speed(player.speed) * f32(dt))
         
-        for fence in fences {
-            if fence.dest != last_fence_dest && next_pos[0] < fence.dest.x + - 10 && next_pos[0] > fence.dest.x - 30 && next_pos[1] < fence.dest.y - 10 && next_pos[1] > fence.dest.y - 40 {
-                next_pos = player.pos
-                break
-            }
+        hit := false
+        if quadrant_owner == int(s.network.this_id) {
+            hit = check_fence_collision(fences[:], next_pos)
+        } else {
+            hit = check_fence_collision(quadrant_fences, next_pos)
         }
-
+        if hit { next_pos = player.pos }
         player.pos = next_pos
     }
     
@@ -803,7 +817,148 @@ move_player :: proc(dt: f64) {
     if player.player_frame > 3 {
         player.player_frame = 0
     }
+
+    player.dest = rl.Rectangle{player.pos[0], player.pos[1], 60, 60}
 }
 
+check_fence_collision :: proc(fences: []gp.Fence, next_pos: [2]f32) -> bool {
+    for fence in fences {
+        if fence.dest != last_fence_dest && next_pos[0] < fence.dest.x + - 10 && next_pos[0] > fence.dest.x - 30 && next_pos[1] < fence.dest.y - 10 && next_pos[1] > fence.dest.y - 40 {
+            return true
+        }
+    }
+    return false
+}
+
+check_quadrant_owner :: proc(pos: [2]f32, s: ^State) -> int {
+    switch s.network.channels.len {
+        case 2:
+            if (pos[0] > QUANDRANT_ONE[0] && pos[0] < QUANDRANT_ONE[2] && pos[1] > QUANDRANT_ONE[1] && pos[1] < QUANDRANT_ONE[3]) ||
+                (pos[0] > QUANDRANT_THREE[0] && pos[0] < QUANDRANT_THREE[2] && pos[1] > QUANDRANT_THREE[1] && pos[1] < QUANDRANT_THREE[3]) {
+                return 0
+            } else {
+                return 1
+            }
+        case 3:
+            if (pos[0] > QUANDRANT_ONE[0] && pos[0] < QUANDRANT_ONE[2] && pos[1] > QUANDRANT_ONE[1] && pos[1] < QUANDRANT_ONE[3]) {
+                return 0
+            } else if (pos[0] > QUANDRANT_TWO[0] && pos[0] < QUANDRANT_TWO[2] && pos[1] > QUANDRANT_TWO[1] && pos[1] < QUANDRANT_TWO[3]) {
+                return 1
+            } else {
+                return 2
+            }
+        case 4:
+            if (pos[0] > QUANDRANT_ONE[0] && pos[0] < QUANDRANT_ONE[2] && pos[1] > QUANDRANT_ONE[1] && pos[1] < QUANDRANT_ONE[3]) {
+                return 0
+            } else if (pos[0] > QUANDRANT_TWO[0] && pos[0] < QUANDRANT_TWO[2] && pos[1] > QUANDRANT_TWO[1] && pos[1] < QUANDRANT_TWO[3]) {
+                return 1
+            } else if (pos[0] > QUANDRANT_THREE[0] && pos[0] < QUANDRANT_THREE[2] && pos[1] > QUANDRANT_THREE[1] && pos[1] < QUANDRANT_THREE[3]) {
+                return 2
+            } else {
+                return 3
+            }
+    }
+    return -1
+}
+
+initialise_other_players :: proc(id: i64) -> [4]gp.Player_Move {
+    other_players := [4]gp.Player_Move{}
+    for i in 0 ..= 3 {
+        if i64(i) != i64(id) {
+            if i == 0 {
+                other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 77, 60, 60}, {255, 255, 255, 255}, 0, false, false, 0, 0}
+            } else if i == 1 {
+                other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 77, 60, 60}, {196, 238, 255, 255}, 1, false, false, 0, 0}
+            } else if i == 2 {
+                other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{80, 467, 60, 60}, {255, 196, 227, 255}, 2,false, false, 0, 0}
+            } else if i == 3 {
+                other_players[i] = gp.Player_Move{rl.Rectangle{0, 0, 48, 48}, rl.Rectangle{967, 467, 60, 60}, {255, 236, 196, 255}, 3, false, false, 0, 0}
+            }
+        }
+    }
+    return other_players
+}
+
+initialise_player :: proc(id: i64, s: ^State) {
+    player.speed = 7
+    player.src = rl.Rectangle{0, 0, 48, 48}
+    player.attacking_src = rl.Rectangle{5, 0, 48, 48}
+    player.moving = false
+    player.player_up = false
+    player.player_down = false 
+    player.player_left = false 
+    player.player_right = false
+    player.player_frame = 0
+    player.attacking = false
+    player.place_fence = false
+    player.placing_fence = false
+    player.health = 100
+    player.moved = false
+    player.attack_done = false
+
+    switch id {
+        case 0:
+            player.pos = {80, 77}
+            player.color = {255, 255, 255, 255}
+        case 1:
+            player.pos = {967, 77}
+            player.color = {196, 238, 255, 255}
+        case 2:
+            player.pos = {80, 467}
+            player.color = {255, 196, 227, 255}
+        case 3:
+            player.pos = {967, 467}
+            player.color = {255, 236, 196, 255}
+    }
+
+    // setup quadrant ownership
+    if s.network.channels.len == 2 {
+        if id == 0 {
+            append(&player.quadrant, QUANDRANT_ONE, QUANDRANT_THREE)
+        } else {
+            append(&player.quadrant, QUANDRANT_TWO, QUANDRANT_FOUR)
+        }
+    } else if s.network.channels.len == 3 {
+        if id == 0 {
+            append(&player.quadrant, QUANDRANT_ONE)
+        } else if id == 1 {
+            append(&player.quadrant, QUANDRANT_TWO)
+        } else if id == 2 {
+            append(&player.quadrant, QUANDRANT_THREE, QUANDRANT_FOUR)
+        }
+    } else if s.network.channels.len == 4 {
+        if id == 0 {
+            append(&player.quadrant, QUANDRANT_ONE)
+        } else if id == 1 {
+            append(&player.quadrant, QUANDRANT_TWO)
+        } else if id == 2 {
+            append(&player.quadrant, QUANDRANT_THREE)
+        } else if id == 3 {
+            append(&player.quadrant, QUANDRANT_FOUR)
+        }
+    }
+}
+
+draw_fences :: proc(fences: []gp.Fence, fenceT: rl.Texture2D) {
+    for fence in fences {
+        rl.DrawTexturePro(fenceT, fence_src, fence.dest, {player.dest.width, player.dest.height}, 0, rl.WHITE)
+    }
+}
+
+handle_fence_hit :: proc(fences: []gp.Fence) -> int{
+    i := 0
+    for &fence in fences {
+        if player.pos[0] < fence.dest.x && player.pos[0] > fence.dest.x - 40 && player.pos[1] < fence.dest.y && player.pos[1] > fence.dest.y - 50 {
+            fence.health -= int(1)
+            break
+        }
+        i += 1
+    }
+    if i == len(fences) {
+        return -1
+    } else {
+        return i
+    }
+}
 
 

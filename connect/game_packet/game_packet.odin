@@ -49,12 +49,9 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
             delete(v)
         case []int:
             delete(v)
-        case Player_Move:
-        case Placed_Fence:
-        case Attack_Fence:
-        case Attack_Player:
-        case Dead_Player:
-        case Player_Start:
+        case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
+        case Send_Fences:
+            delete(v.fences, allocator)
     }
 }
 
@@ -68,34 +65,11 @@ default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_
             return strings.clone(v, allocator) 
         case []int:
             return slice.clone(v)
-        case Player_Move:
-            return Player_Move{
-                src = v.src,
-                dest = v.dest,
-                color = v.color,
-            }
-        case Placed_Fence:
-            return Placed_Fence{
-                src = v.src,
-                dest = v.dest,
-            }
-        case Attack_Fence:
-            return Attack_Fence{
-                id = v.id,
-                health = v.health,
-                destroyed = v.destroyed,
-            }
-        case Attack_Player:
-            return Attack_Player{
-                id = v.id,
-            }
-        case Dead_Player:
-            return Dead_Player{
-                id = v.id,
-            }
-        case Player_Start:
-            return Player_Start{
-                id = v.id,
+        case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
+            return v
+        case Send_Fences:
+            return Send_Fences{
+                fences = slice.clone(v.fences, allocator)
             }
     }
     return nil
@@ -197,8 +171,8 @@ get_data :: proc(network: ^Network, sbuffer: ^Sequence_Buffer, sequence: u16) ->
 put_message:: proc(network: ^Network, sbuffer: ^Sequence_Buffer, message: Message, sequence: u16, color: Color) {
     index := sequence % SEQUENCE_BUFFER_SIZE
     old_data: Data 
-    if sbuffer.buf_seq[index] != max(u32) {
 
+    if sbuffer.buf_seq[index] != max(u32) {
         // get the old data
         old_data = sbuffer.buf_msg[index]
 
@@ -270,7 +244,9 @@ Message :: union {
     Attack_Fence,
     Attack_Player,
     Dead_Player,
-    Player_Start
+    Player_Start,
+    Send_Fences,
+    Request_Fences
 }
 
 Data :: union #shared_nil {
@@ -294,8 +270,13 @@ Player_Move :: struct {
     health: i32
 }
 
+Fence :: struct {
+    dest: rl.Rectangle,
+    health: int,
+    id: [2]int
+}
+
 Placed_Fence :: struct {
-    src: rl.Rectangle,
     dest: rl.Rectangle,
     id: [2]int
 }
@@ -318,6 +299,13 @@ Player_Start :: struct {
     id: i64
 }
 
+Request_Fences :: struct {
+    id: i64
+}
+
+Send_Fences :: struct {
+    fences: []Fence
+}
 
 init_network :: proc(
     network: ^Network,
@@ -435,11 +423,18 @@ send_data:: proc(network: ^Network, data: Data, net_id: int) -> bool {
 }
 
 send_message :: proc(network: ^Network, message: Message, net_id: int) -> bool {
-    return send_data(network, message, net_id) 
+    return send_data(network, clone_message(network, message), net_id) 
+    //return send_data(network, message, net_id) 
 }
 
 broadcast_message :: proc(network: ^Network, message: Message) -> bool {
-    return broadcast_data(network, message)
+    for &channel in sa.slice(&network.channels) {
+        udp_err := send_data_to_channel(network, clone_message(network, message), &channel)
+        if udp_err != nil {
+            return false
+        }    
+    }
+    return true
 }
 
 @private
@@ -638,7 +633,6 @@ deal_with_internal :: proc(network: ^Network, channel: ^Channel, internal: Inter
     packet_ack_processed := header.ack_processed
     packet_ack_bits := header.ack_bits
 
-    // fmt.printfln("%#v", header)
     if network.is_recording && !channel.marker_received {
         if paws_greater_than(packet_seq, channel.record_end_seq) {
             for _ in 0..<(packet_seq - channel.record_end_seq) {
@@ -780,7 +774,6 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
 
     acknowledge(network, &channel.seq_send, packet_ack)
     if paws_greater_than(packet_ack, packet_ack_processed){
-        //fmt.println(packet_ack - packet_ack_processed)
         for n in 1..=u16(min(32, packet_ack - packet_ack_processed)) {
             ack_minus_n := packet_ack - n
             if int(n) in packet_ack_bits {
