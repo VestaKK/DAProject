@@ -14,6 +14,8 @@ import gp "game_packet"
 import "core:time"
 import lg "core:math/linalg"
 import "core:slice"
+import sa "core:container/small_array"
+
 
 Options :: struct {
     port: int `args:"pos=0,requied" usage:"Client Port"`,
@@ -89,7 +91,7 @@ Player :: struct {
     health: i32,
     moved: bool,
     attack_done: bool,
-    quadrant: [dynamic][4]f32
+    quadrant: sa.Small_Array(gp.MAX_CONNECTIONS, [4]f32)
 }
 
 // Game State intialization
@@ -99,10 +101,10 @@ GRID_WIDTH :: 20
 CELL_SIZE :: 16
 CANVAS_SIZE :: GRID_WIDTH * CELL_SIZE
 
-QUANDRANT_ONE :: [4]f32{66, 66, 567, 293}
-QUANDRANT_TWO :: [4]f32{567, 66, 1047, 293}
-QUANDRANT_THREE :: [4]f32{66, 293, 567, 560}
-QUANDRANT_FOUR :: [4]f32{567, 293, 1047, 560}
+QUANDRANT_ONE :: [4]f32{66, 50, 567, 293}
+QUANDRANT_TWO :: [4]f32{567, 50, 1047, 293}
+QUANDRANT_THREE :: [4]f32{66, 293, 567, 570}
+QUANDRANT_FOUR :: [4]f32{567, 293, 1047, 570}
 
 camera := rl.Camera2D{}
 
@@ -116,6 +118,8 @@ game_state := Game_State{
     fences = fences[:],
     player = player
 }
+
+snapshot := Game_State{}
 
 current_fence := gp.Fence{
     dest = rl.Rectangle{0, 0, 20, 20}
@@ -173,7 +177,6 @@ _main :: proc() {
     bound_endpoint := net.Endpoint{bound_address, opt.port}
     fmt.println(bound_endpoint)
 
-
     client, make_err := net.make_bound_udp_socket(bound_address, opt.port)
     if make_err != nil {
         fmt.eprintln(net.last_platform_error_string())
@@ -229,6 +232,7 @@ _main :: proc() {
         delete(state.lobby.host_name)
     }
 
+    delete(state.save_bytes)
     rl.CloseWindow()
 }
 
@@ -260,7 +264,8 @@ host_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
             response.host.endpoint,
             gp.default_delete_proc,
             gp.default_clone_proc,
-            true
+            true,
+            state.lobby.load_required,
         )
         delete(response.host.user_name)
         for peer_profile in response.players {
@@ -301,6 +306,8 @@ join_scene :: proc(state: ^State, socket: net.UDP_Socket, server_endpoint: net.E
             response.host.endpoint,
             gp.default_delete_proc,
             gp.default_clone_proc,
+            false,
+            state.lobby.load_required,
         )
         delete(response.host.user_name)
         for peer_profile in response.players {
@@ -444,38 +451,16 @@ broadcast_game_message :: proc(s: ^State, message: gp.Message) {
     if !ok { fmt.println("[error] Failed to broadcast message: %v", message) }
 }
 
-DummyState :: struct {
-    counter: int,
+load_game_state :: proc(game_state: ^Game_State) {
+    for fence in game_state.fences {
+        append(&fences, fence)
+    }
+    player = game_state.player
 }
-
-state: DummyState
-snapshot: DummyState
 
 play_game :: proc(s: ^State) {
 
-    messages: []gp.Message
-    cbor_err: cbor.Unmarshal_Error
-    if s.lobby.load_required {
 
-        // Load Data and do stuff
-        if gp.this_is_host(s.network) {
-            messages, cbor_err = gp.load_network(&s.network, &state, s.save_bytes)
-        } else {
-            messages, cbor_err = gp.wait_for_load_save(&s.network, &state)
-        }
-
-        for message in messages {
-            // do things
-        }
-
-        gp.cleanup_loaded_messages(&s.network, messages)
-    } else {
-        gp.start_network(&s.network)
-    }
-
-    defer gp.close_network(&s.network)
-
-    last_tick := time.tick_now()
     accum := time.Duration(0)
     game_time := rl.GetTime()
 
@@ -495,7 +480,33 @@ play_game :: proc(s: ^State) {
     fence_update := false
     prev_quad := s.network.this_id
 
-    broadcast_game_message(s, gp.Message(gp.Player_Start{i64(s.network.this_id)}))
+    if s.lobby.load_required {
+
+        messages: []gp.Message
+        cbor_err: cbor.Unmarshal_Error
+
+        // Load Data and do stuff
+        if gp.this_is_host(s.network) {
+            messages, cbor_err = gp.load_network(&s.network, &game_state, s.save_bytes)
+        } else {
+            messages, cbor_err = gp.wait_for_load_save(&s.network, &game_state)
+        }
+
+        for message in messages {  
+            process_messages(s, messages, &other_players, &fence_update, &quadrant_fences)
+        }
+
+        load_game_state(&game_state)
+
+        gp.cleanup_loaded_messages(&s.network, messages)
+    } else {
+        gp.start_network(&s.network)
+    }
+
+    defer gp.close_network(&s.network)
+
+    last_tick := time.tick_now()
+    broadcast_game_message(s, gp.Message(gp.Player_Start{i64(s.network.this_id), player.health, player.dest, player.color}))
 
     for !rl.WindowShouldClose() {
 
@@ -509,58 +520,42 @@ play_game :: proc(s: ^State) {
 
         gp.poll_for_packets(&s.network)         
 
+        if gp.this_is_host(s.network) {
+
+            if rl.IsKeyPressed(.P) {
+                gp.game_save_start(&s.network) 
+                fmt.println("STARTING SAVE")
+            }
+
+            if gp.game_save_is_complete(s.network) {
+                game_save := gp.game_save_complete(&s.network)
+                defer gp.delete_game_save(&s.network, game_save)
+            
+                save_bytes, err := cbor.marshal_into_bytes(game_save)
+                defer delete(save_bytes)
+
+                file_err := os2.write_entire_file("SAVE", save_bytes)
+            }
+        }
+
+
+        snapshot_proc :: proc(state: ^Game_State) -> Game_State{
+            return state^
+        }
+        if (gp.should_snapshot(s.network)) {
+            save_game_state()
+            snapshot = gp.take_state_snapshot(&s.network, &game_state, snapshot_proc)
+        }
+
+        if gp.partial_snapshot_ready(s.network) {
+            gp.partial_snapshot_create_and_send(&s.network, snapshot)
+        }
+
         if (accum > time.Second / 60) {
             accum = 0
             messages := gp.get_messages(&s.network)
             defer gp.cleanup_messages(&s.network)
-
-            for m in messages {
-                #partial switch v in m {
-                    case gp.Player_Start:
-                        other_players[v.id].health = 100
-                    case gp.Player_Move:
-                        other_players[v.id] = v
-                    case gp.Placed_Fence:
-                        if v.id[0] != int(s.network.this_id) {
-                            append(&fences, gp.Fence{v.dest, 20, {v.id[0], len(fences)}})
-                            fence_update = true
-                        }
-                    case gp.Attack_Fence:
-                        i := 0
-                        for &fence in fences {
-                            if fence.id == v.id {
-                                fence_update = true
-                                if v.destroyed {
-                                    unordered_remove(&fences, i)
-                                    break
-                                }
-                                fence.health = v.health
-                            }
-                            i += 1
-                        }
-                    case gp.Attack_Player:
-                        if v.id == i64(s.network.this_id) {
-                            player.health -= 1
-                            if player.health <= 0 {
-                                player.health = 0
-                                player.color = rl.RED
-                                broadcast_game_message(s, gp.Message(gp.Dead_Player{i64(s.network.this_id)}))
-                            }
-                        } 
-                    case gp.Dead_Player:
-                        other_players[v.id].health = 0
-                        other_players[v.id].color = rl.RED
-                    case gp.Send_Fences:
-                        if len(quadrant_fences) > 0 {
-                            delete(quadrant_fences)
-                        }
-                        quadrant_fences = slice.clone(v.fences)
-                    case gp.Request_Fences:
-                        send_fences := gp.Send_Fences{fences[:]}
-                        send_game_message(s, gp.Message(send_fences), int(v.id))
-                }
-                    
-            }
+            process_messages(s, messages, &other_players, &fence_update, &quadrant_fences)
         }
 
         player.moved = false
@@ -707,17 +702,69 @@ play_game :: proc(s: ^State) {
         framecount += 1
     }
 
-    save_game_state()
-    fmt.println(game_state)
-
     // clean up
     rl.UnloadTexture(fenceT)
     rl.UnloadTexture(background)
     rl.UnloadTexture(character)
     rl.UnloadTexture(characterAttack)
     delete(fences)
-    delete(player.quadrant)
+    if quadrant_fences != nil {
+        delete(quadrant_fences)
+    }
+}
 
+
+process_messages :: proc(s: ^State, messages: []gp.Message, other_players: ^[4]gp.Player_Move, fence_update: ^bool, quadrant_fences: ^[]gp.Fence) {
+    for m in messages {
+        #partial switch v in m {
+            case gp.Player_Start:
+                other_player := &other_players[v.id]
+                other_player.health = v.health
+                other_player.dest = v.dest
+                other_player.color = v.color
+            case gp.Player_Move:
+                other_players[v.id] = v
+            case gp.Placed_Fence:
+                if v.id[0] != int(s.network.this_id) {
+                    append(&fences, gp.Fence{v.dest, 20, {v.id[0], len(fences)}})
+                    fence_update^ = true
+                }
+            case gp.Attack_Fence:
+                i := 0
+                for &fence in fences {
+                    if fence.id == v.id {
+                        fence_update^ = true
+                        if v.destroyed {
+                            unordered_remove(&fences, i)
+                            break
+                        }
+                        fence.health = v.health
+                    }
+                    i += 1
+                }
+            case gp.Attack_Player:
+                if v.id == i64(s.network.this_id) {
+                    player.health -= 1
+                    if player.health <= 0 {
+                        player.health = 0
+                        player.color = rl.RED
+                        broadcast_game_message(s, gp.Message(gp.Dead_Player{i64(s.network.this_id)}))
+                    }
+                } 
+            case gp.Dead_Player:
+                other_players[v.id].health = 0
+                other_players[v.id].color = rl.RED
+            case gp.Send_Fences:
+                if len(quadrant_fences) > 0 {
+                    delete(quadrant_fences^)
+                }
+                quadrant_fences^ = slice.clone(v.fences)
+            case gp.Request_Fences:
+                send_fences := gp.Send_Fences{fences[:]}
+                send_game_message(s, gp.Message(send_fences), int(v.id))
+        }
+            
+    }
 }
 
 // Game Logic
@@ -967,30 +1014,32 @@ initialise_player :: proc(id: i64, s: ^State) {
             player.color = {255, 236, 196, 255}
     }
 
+    player.dest = rl.Rectangle{player.pos.x, player.pos.y, 60, 60}
+
     // setup quadrant ownership
     if s.network.channels.len == 2 {
         if id == 0 {
-            append(&player.quadrant, QUANDRANT_ONE, QUANDRANT_THREE)
+            sa.append(&player.quadrant, QUANDRANT_ONE, QUANDRANT_THREE)
         } else {
-            append(&player.quadrant, QUANDRANT_TWO, QUANDRANT_FOUR)
+            sa.append(&player.quadrant, QUANDRANT_TWO, QUANDRANT_FOUR)
         }
     } else if s.network.channels.len == 3 {
         if id == 0 {
-            append(&player.quadrant, QUANDRANT_ONE)
+            sa.append(&player.quadrant, QUANDRANT_ONE)
         } else if id == 1 {
-            append(&player.quadrant, QUANDRANT_TWO)
+            sa.append(&player.quadrant, QUANDRANT_TWO)
         } else if id == 2 {
-            append(&player.quadrant, QUANDRANT_THREE, QUANDRANT_FOUR)
+            sa.append(&player.quadrant, QUANDRANT_THREE, QUANDRANT_FOUR)
         }
     } else if s.network.channels.len == 4 {
         if id == 0 {
-            append(&player.quadrant, QUANDRANT_ONE)
+            sa.append(&player.quadrant, QUANDRANT_ONE)
         } else if id == 1 {
-            append(&player.quadrant, QUANDRANT_TWO)
+            sa.append(&player.quadrant, QUANDRANT_TWO)
         } else if id == 2 {
-            append(&player.quadrant, QUANDRANT_THREE)
+            sa.append(&player.quadrant, QUANDRANT_THREE)
         } else if id == 3 {
-            append(&player.quadrant, QUANDRANT_FOUR)
+            sa.append(&player.quadrant, QUANDRANT_FOUR)
         }
     }
 }

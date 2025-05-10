@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:strings"
 import "core:slice"
 import rl "vendor:raylib"
+import "core:math/rand"
 
 SEQUENCE_BUFFER_SIZE :: 1024
 MAX_CONNECTIONS :: 4
@@ -37,6 +38,7 @@ Network :: struct {
         is_recording: bool,
         snap_ready: bool,
         should_snapshot: bool,
+        snapshot_taken: bool,
         recorded_count: int,
 
         // Needed for resending partial snaps
@@ -313,7 +315,10 @@ Dead_Player :: struct {
 }
 
 Player_Start :: struct {
-    id: i64
+    id: i64,
+    health: i32,
+    dest: rl.Rectangle,
+    color: rl.Color,
 }
 
 Request_Fences :: struct {
@@ -616,7 +621,7 @@ poll_for_packets :: proc(network: ^Network)  {
     network.last_tick = time_now
     network.tick_accum += dt
 
-    if network.tick_accum > time.Second/2 {
+    if network.tick_accum > time.Second / 10 {
         network.tick_accum = 0
         broadcast_data(network, Internal(Keep_Alive{}))
     }
@@ -632,7 +637,7 @@ poll_for_packets :: proc(network: ^Network)  {
     }
 
     // This means we've finished recording, and the partial snapshot is good to go
-    if network.is_recording && network.recorded_count == sa.len(network.channels) {
+    if network.is_recording && network.snapshot_taken && network.recorded_count == sa.len(network.channels) {
         network.snap_state = {}
         network.snap_ready = true 
 
@@ -688,6 +693,7 @@ game_save_start :: proc(network: ^Network) -> bool {
     network.snap_state = { // Start recording stuff, indicate to the user that they should snapshot
         is_recording = true,
         should_snapshot = true,
+        snapshot_taken = false,
         snap_ready = false,
         recorded_count = 0,
     }
@@ -708,6 +714,8 @@ game_save_start :: proc(network: ^Network) -> bool {
             append(&c.recorded_messages, clone)
         }
     }
+
+    broadcast_data(network, Internal(Marker{}))
     return true
 }
 
@@ -741,6 +749,7 @@ delete_game_save :: proc(network: ^Network, game_save: Game_Save) {
 take_state_snapshot :: proc(network: ^Network, data: ^$T, $snapshot_proc: proc(^T) -> T) -> T {  
     assert(network.should_snapshot)
     network.should_snapshot = false
+    network.snapshot_taken = true
     return snapshot_proc(data)
 }
 
@@ -752,6 +761,8 @@ partial_snapshot_create_and_send :: proc(network: ^Network, data: $T) {
 
         // Partial is compiled
         network.partial_compiled = true
+
+        network.snapshot_taken = false
 
         // Save State
         state_bytes, state_err := cbor.marshal_into_bytes(data, cbor.ENCODE_SMALL, network.msg_allocator, network.net_temp)
@@ -903,8 +914,6 @@ deal_with_internal :: proc(network: ^Network, channel: ^Channel, internal: Inter
     switch v in internal {
         case Partial_Snapshot:
 
-            fmt.println(header.from, network.snapshots_received, network.game_save.is_complete)
-
             // Should only appear on the host client
             assert(this_is_host(network^))
 
@@ -935,11 +944,12 @@ deal_with_internal :: proc(network: ^Network, channel: ^Channel, internal: Inter
             }
 
         case Partial_Save:
-            if network.partial_received || network.is_loaded {
+            if network.partial_received {
                 delete(v.state, network.msg_allocator)
                 delete(v.msgs, network.msg_allocator)
                 break
             }
+            network.partial_received = true
             network.partial_save = v
 
         case Keep_Alive:
@@ -1061,6 +1071,7 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
     channel := sa.get_ptr(&network.channels, int(packet.header.from))
     header := packet.header
 
+
     // Is this the first time I've seen a different color to the current process color
     // Only true when we're not recording
     is_first_marker_received := !network.is_recording && network.color != header.color
@@ -1086,13 +1097,18 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
     if network.is_recording && 
         channel.marker_received &&
         !channel.done_recording && 
-        paws_greater_than(channel.ack_processed, channel.record_end_seq) {
+        paws_less_or_eq(channel.ack_processed, channel.record_end_seq) {
         channel.done_recording = true
         network.recorded_count += 1 
     } // essentially sets channel.done_recording = true
 
+
+    // If the packet is from the host
+    // And we partial snapshot to send
     if int(header.from) == network.host_id &&
         network.partial_compiled {
+
+        // Check if the host has received the snapshot
         if int(network.this_id + 1) in header.save_bits {
             network.partial_compiled = false
             delete(network.partial_snap.state, network.net_allocator)
