@@ -8,7 +8,7 @@ import "core:time"
 import "core:fmt"
 import "core:strings"
 import "core:slice"
-import "core:math/rand"
+import rl "vendor:raylib"
 
 SEQUENCE_BUFFER_SIZE :: 1024
 MAX_CONNECTIONS :: 4
@@ -69,9 +69,10 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
     switch v in message {
         case int:
         case []int:
-            delete(v, allocator)
-        case DADA:
-            delete(v.DATA, allocator)
+            delete(v)
+        case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
+        case Send_Fences:
+            delete(v.fences, allocator)
     }
 }
 
@@ -80,9 +81,13 @@ default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_
         case int:
             return v
         case []int:
-            return slice.clone(v, allocator)
-        case DADA:
-            return DADA{slice.clone(v.DATA, allocator)}
+            return slice.clone(v)
+        case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
+            return v
+        case Send_Fences:
+            return Send_Fences{
+                fences = slice.clone(v.fences, allocator)
+            }
     }
     return nil
 }
@@ -184,8 +189,8 @@ get_data :: proc(network: ^Network, sbuffer: ^Sequence_Buffer, sequence: u16) ->
 put_message:: proc(network: ^Network, sbuffer: ^Sequence_Buffer, message: Message, sequence: u16, color: Color) {
     index := sequence % SEQUENCE_BUFFER_SIZE
     old_data: Data 
-    if sbuffer.buf_seq[index] != max(u32) {
 
+    if sbuffer.buf_seq[index] != max(u32) {
         // get the old data
         old_data = sbuffer.buf_msg[index]
 
@@ -259,11 +264,16 @@ Internal :: union {
 
 Message :: union {
     int,
+    string,
     []int,
-    DADA,
-}
-DADA :: struct {
-    DATA: []int,
+    Player_Move,
+    Placed_Fence,
+    Attack_Fence,
+    Attack_Player,
+    Dead_Player,
+    Player_Start,
+    Send_Fences,
+    Request_Fences
 }
 
 Data :: union #shared_nil {
@@ -274,6 +284,54 @@ Data :: union #shared_nil {
 Packet :: struct {
     header: Header,
     data: Data,
+}
+
+Player_Move :: struct {
+    src: rl.Rectangle,
+    dest: rl.Rectangle,
+    color: rl.Color,
+    id: i64,
+    attacking: bool,
+    placing_fence: bool,
+    direction: i32,
+    health: i32
+}
+
+Fence :: struct {
+    dest: rl.Rectangle,
+    health: int,
+    id: [2]int
+}
+
+Placed_Fence :: struct {
+    dest: rl.Rectangle,
+    id: [2]int
+}
+
+Attack_Fence :: struct {
+    id: [2]int,
+    health: int,
+    destroyed: bool
+}
+
+Attack_Player :: struct {
+    id: i64
+}
+
+Dead_Player :: struct {
+    id: i64
+}
+
+Player_Start :: struct {
+    id: i64
+}
+
+Request_Fences :: struct {
+    id: i64
+}
+
+Send_Fences :: struct {
+    fences: []Fence
 }
 
 init_network :: proc(
