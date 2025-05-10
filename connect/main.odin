@@ -551,7 +551,10 @@ play_game :: proc(s: ^State) {
                         other_players[v.id].health = 0
                         other_players[v.id].color = rl.RED
                     case gp.Send_Fences:
-                        quadrant_fences = v.fences
+                        if len(quadrant_fences) > 0 {
+                            delete(quadrant_fences)
+                        }
+                        quadrant_fences = slice.clone(v.fences)
                     case gp.Request_Fences:
                         send_fences := gp.Send_Fences{fences[:]}
                         send_game_message(s, gp.Message(send_fences), int(v.id))
