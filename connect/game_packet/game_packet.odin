@@ -600,13 +600,27 @@ send_data_to_channel :: proc(network: ^Network, data: Data, channel: ^Channel) -
     if message, ok := data.(Message); ok {
         channel.seq += 1
         put_message(network, &channel.seq_send, message, channel.seq, network.color)
-    }
+    } 
     packet.header.seq = channel.seq
 
-    // rand := rand.float32()
-    // if rand < 0.5 {
-    //     return nil
-    // }
+    rand := rand.float32()
+    should_drop := false
+    DROPPED_PERCENT :: 0.5
+    switch v in data {
+        case Internal:
+            #partial switch d in v {
+                case Keep_Alive, Marker, Partial_Snapshot:
+                    if rand < DROPPED_PERCENT {
+                        should_drop = true
+                    }
+            }
+        case Message:
+            if rand < DROPPED_PERCENT {
+                should_drop = true
+            }
+    }
+    if should_drop do return nil
+
 
     bytes, marshal_err := cbor.marshal_into_bytes(packet, cbor.ENCODE_SMALL, network.net_allocator, network.net_temp)
     defer delete(bytes)
@@ -1070,7 +1084,6 @@ another_marker :: proc(network: ^Network, channel: ^Channel, header: Header) {
 deal_with_packet :: proc(network: ^Network, packet: Packet) {
     channel := sa.get_ptr(&network.channels, int(packet.header.from))
     header := packet.header
-
 
     // Is this the first time I've seen a different color to the current process color
     // Only true when we're not recording
