@@ -456,6 +456,7 @@ load_game_state :: proc(game_state: ^Game_State) {
         append(&fences, fence)
     }
     player = game_state.player
+    delete(game_state.fences)
 }
 
 play_game :: proc(s: ^State) {
@@ -497,7 +498,6 @@ play_game :: proc(s: ^State) {
         }
 
         load_game_state(&game_state)
-
         gp.cleanup_loaded_messages(&s.network, messages)
     } else {
         gp.start_network(&s.network)
@@ -549,6 +549,7 @@ play_game :: proc(s: ^State) {
 
         if gp.partial_snapshot_ready(s.network) {
             gp.partial_snapshot_create_and_send(&s.network, snapshot)
+            delete(game_state.fences)
         }
 
         if (accum > time.Second / 60) {
@@ -711,6 +712,7 @@ play_game :: proc(s: ^State) {
     if quadrant_fences != nil {
         delete(quadrant_fences)
     }
+
 }
 
 

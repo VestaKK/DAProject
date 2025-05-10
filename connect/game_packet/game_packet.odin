@@ -687,12 +687,14 @@ game_save_start :: proc(network: ^Network) -> bool {
     assert(this_is_host(network^))
     if network.is_recording || // must not be already recording a snapshot
         network.snap_ready || // must have processed the previous snapshot
-        network.is_saving { // must currently holding onto a save that hasn't been retrieved by client
+        network.is_saving || // must currently holding onto a save that hasn't been retrieved by client
+        network.partial_compiled{
         return false
     }
 
     // The host has to manage both saving their partial state and
     // compiling the partial states into a complete save
+    fmt.println("COLOR", network.color)
 
     network.save_state = { // game_save.partials is the same size as the number of processes (including itself)
         snapshots_received = {},
@@ -705,6 +707,7 @@ game_save_start :: proc(network: ^Network) -> bool {
     }
 
     network.snap_state = { // Start recording stuff, indicate to the user that they should snapshot
+        snap_color = network.color,
         is_recording = true,
         should_snapshot = true,
         snapshot_taken = false,
@@ -1087,11 +1090,11 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
 
     // Is this the first time I've seen a different color to the current process color
     // Only true when we're not recording
-    is_first_marker_received := !network.is_recording && network.color != header.color
+    is_first_marker_received := !network.is_recording && network.color != header.color && paws_greater_than(header.seq, channel.ack)
 
     // Is this the first time I've seen a same colored message during the snapshot recording on this channel
     // Only true when we're recording
-    another_marker_received := network.is_recording && !channel.marker_received && network.color == header.color
+    another_marker_received := network.is_recording && !channel.marker_received && network.color == header.color 
 
     // Check for snapshot conditions
     if is_first_marker_received {
