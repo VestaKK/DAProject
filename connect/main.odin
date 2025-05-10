@@ -538,6 +538,14 @@ play_game :: proc(s: ^State) {
             camera.target = {player.pos[0] - CANVAS_SIZE/2 - 40, player.pos[1] - 120}
         }
 
+        // Check if any other players are alive
+        all_dead := true
+        for other_player in other_players {
+            if other_player.id != i64(s.network.this_id) && other_player.health > 0 {
+                all_dead = false
+            }
+        }
+
         rl.BeginDrawing()
         rl.BeginMode2D(camera)
         rl.ClearBackground({155, 212, 195, 255}) 
@@ -548,13 +556,6 @@ play_game :: proc(s: ^State) {
             rl.DrawText("You have died", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
         }
 
-        // Check if any other players are alive
-        all_dead := true
-        for other_player in other_players {
-            if other_player.id != i64(s.network.this_id) && other_player.health > 0 {
-                all_dead = false
-            }
-        }
         if all_dead {
             rl.DrawText("Winner", i32(player.pos.x - 100), i32(player.pos.y - 50), 20, {0, 0, 0, 255})
         }
