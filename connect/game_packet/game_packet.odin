@@ -67,9 +67,6 @@ Game_Save :: struct {
 
 default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) {
     switch v in message {
-        case int:
-        case []int:
-            delete(v)
         case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
         case Send_Fences:
             delete(v.fences, allocator)
@@ -78,10 +75,6 @@ default_delete_proc :: proc(message: Message, allocator: runtime.Allocator, temp
 
 default_clone_proc :: proc(message: Message, allocator: runtime.Allocator, temp_allocator: runtime.Allocator) -> Message {
     switch v in message {
-        case int:
-            return v
-        case []int:
-            return slice.clone(v)
         case Player_Move, Placed_Fence, Attack_Fence, Attack_Player, Dead_Player, Player_Start, Request_Fences:
             return v
         case Send_Fences:
@@ -263,9 +256,6 @@ Internal :: union {
 }
 
 Message :: union {
-    int,
-    string,
-    []int,
     Player_Move,
     Placed_Fence,
     Attack_Fence,

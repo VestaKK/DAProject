@@ -507,10 +507,7 @@ play_game :: proc(s: ^State) {
         game_dt := game_time - rl.GetTime()
         game_time = curr
 
-        should_snap, snap_ready := gp.poll_for_packets(&s.network) 
-
-        if should_snap || snap_ready {
-        } 
+        gp.poll_for_packets(&s.network)         
 
         if (accum > time.Second / 60) {
             accum = 0
