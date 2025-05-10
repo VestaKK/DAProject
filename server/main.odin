@@ -16,6 +16,7 @@ Lobby :: struct {
     host_name: string,
     host_profile: sh.Private_Profile, 
     joined: [sh.MAX_PLAYER_COUNT - 1]sh.Private_Profile,
+    load_required: bool,
 }
 
 lobbies: map[i64]^Lobby
@@ -73,6 +74,7 @@ init_lobby :: proc(data: sh.Create_Lobby_Packet, public_endpoint, private_endpoi
     new_lobby := Lobby{
         lobby_name = data.lobby_name,
         host_name = data.host_name,
+        load_required = data.load_required,
     }
 
     new_lobby.host_profile = sh.Private_Profile{
@@ -148,7 +150,7 @@ deal_with_packet :: proc(server: net.UDP_Socket, packet: sh.Packet, remote: net.
             lobby.joined_count += 1
             lobby.id_counter += 1
 
-            success_response := sh.Response(sh.Join_Lobby_Response{assigned_id, lobby.lobby_name, lobby.host_name}) 
+            success_response := sh.Response(sh.Join_Lobby_Response{assigned_id, lobby.lobby_name, lobby.host_name, lobby.load_required}) 
             send_response(server, remote, success_response)
         case sh.Leave_Lobby_Packet:
             lobby, ok := lobbies[data.lobby_id]

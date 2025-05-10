@@ -16,6 +16,7 @@ Create_Lobby_Packet :: struct {
     lobby_name: string,
     host_name: string,
     host_endpoint: net.Endpoint,
+    load_required: bool,
 }
 
 Join_Lobby_Packet :: struct {
@@ -49,6 +50,7 @@ Join_Lobby_Response :: struct {
     assigned_id: i64,
     lobby_name: string,
     host_name: string,
+    load_required: bool,
 }
 
 Leave_Lobby_Response :: struct {}
