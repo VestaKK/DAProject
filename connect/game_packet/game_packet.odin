@@ -605,7 +605,7 @@ send_data_to_channel :: proc(network: ^Network, data: Data, channel: ^Channel) -
 
     rand := rand.float32()
     should_drop := false
-    DROPPED_PERCENT :: 0.5
+    DROPPED_PERCENT :: 0.0
     switch v in data {
         case Internal:
             #partial switch d in v {
