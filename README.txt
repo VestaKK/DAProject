@@ -12,6 +12,8 @@ Structure:
 - connect also contains the game_packet.odin file which defines the UDP based network layer of the program 
 - server contains the server code that can be ran on a dedicated pc to act as a matchmaking server
 - shared contains the networking protocol used to communicate to the matchmaking server
+- map.png, Fences.png, actions.png and Spritesheet.png are textures needed by the connect program
+- raylib.dll is also need by the connect program for graphics 
 
 Running the program:
 The program can be run using the following commands from the root directory of the project (where client.exe is located):
