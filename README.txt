@@ -5,12 +5,13 @@ Topic: snapshots
 Programming Language: Odin
 
 Overview:
-This project involved the creation of a basic multiplayer game that can be saved at any point by the host using Mattern's snapshot algorithm.
+This project involved the creation of a basic multiplayer game that can be saved at any point by the host inspired by Mattern's snapshot algorithm.
 
 Structure:
 - connect contains the main.odin game file which contains all logic surrounding the game mechanics and snapshot loading / saving
 - connect also contains the game_packet.odin file which defines the UDP based network layer of the program 
 - server contains the server code that can be ran on a dedicated pc to act as a matchmaking server
+- shared contains the networking protocol used to communicate to the matchmaking server
 
 Running the program:
 The program can be run using the following commands from the root directory of the project (where client.exe is located):
