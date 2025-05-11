@@ -854,6 +854,10 @@ paws_greater_than :: proc(a, b: u16) -> bool {
     return diff > 0 && diff < HALF_RANGE 
 }
 
+paws_greater_or_eq :: proc(a, b: u16) -> bool {
+    return paws_greater_than(a, b) || a == b
+}
+
 paws_less_or_eq :: proc(a, b: u16) -> bool {
     return !paws_greater_than(a, b)
 }
@@ -1090,8 +1094,8 @@ deal_with_packet :: proc(network: ^Network, packet: Packet) {
 
     // Is this the first time I've seen a different color to the current process color
     // Only true when we're not recording
-    is_first_marker_received := !network.is_recording && network.color != header.color && paws_greater_than(header.seq, channel.ack)
-
+    is_first_marker_received := !network.is_recording && network.color != header.color && paws_greater_or_eq(header.seq, channel.ack)
+    
     // Is this the first time I've seen a same colored message during the snapshot recording on this channel
     // Only true when we're recording
     another_marker_received := network.is_recording && !channel.marker_received && network.color == header.color 
